@@ -12,7 +12,7 @@
         , upgrade/1
         ]).
 
--define(PRINT_CONSOLE(Format, Args), io:format(Format++"~n", Args)).
+-define(PRINT(Format, Args), io:format(Format++"~n", Args)).
 
 %% Called when the plugin application start
 load(_Env) ->
@@ -23,8 +23,33 @@ unload() ->
 
 upgrade(TargetVsn) ->
     CurrVsn = emqx_release:version(),
-    ?PRINT_CONSOLE("Hot upgrading emqx from current version: ~p to target version: ~p",
-        [CurrVsn, TargetVsn]),
-    ?PRINT_CONSOLE("Successfully upgraded emqx to target version: ~p",
-        [TargetVsn]),
-    ok.
+    case emqx_relup_handler:check_upgrade(TargetVsn) of
+        {error, Reason} ->
+            ?PRINT("[ERROR] check upgrade failed, reason: ~p", [Reason]),
+            {error, Reason};
+        ok ->
+            ?PRINT("[INFO] Hot upgrading emqx from current version: ~p to target version: ~p",
+                [CurrVsn, TargetVsn]),
+            try emqx_relup_handler:perform_upgrade(TargetVsn) of
+                {ok, UnpackDir} ->
+                    emqx_relup_handler:permanent_upgrade(TargetVsn, UnpackDir),
+                    ?PRINT("[INFO] Successfully upgraded emqx to target version: ~p", [TargetVsn])
+                {error, Reason} = Err ->
+                    ?PRINT("[ERROR] upgrade failed, reason: ~p", [Reason]),
+                    Err;
+            catch
+                throw:Reason ->
+                    restart_vm(Reason),
+                    {error, Reason};
+                Err:Reason:ST ->
+                    restart_vm({Err, Reason, ST})
+                    {error, {Err, Reason, ST}}
+            end
+    end.
+
+restart_vm(Reason) ->
+    ?PRINT("[ERROR] upgrade failed, reason: ~p, restart VM now!", [Reason]),
+    %% Maybe we can rollback the system rather than restart the VM. Here we simply
+    %% restart the VM because if we reload the modules we just upgraded,
+    %% some processes will probably be killed as they are still runing old code.
+    init:restart().
