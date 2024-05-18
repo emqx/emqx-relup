@@ -9,6 +9,7 @@
         , lib_app_vsn/1
         ]).
 
+-import(lists, [concat/1]).
 
 make_libs_info(Rel, RootDir) ->
     AppDescList = make_app_desc_list(rel_libs(Rel), RootDir),
@@ -41,8 +42,10 @@ lib_app_vsn(Lib) ->
 %% Internal functions
 %%==============================================================================
 make_app_desc_list(Libs, RootDir) ->
-    lists:map(fun({AppName, AppVsn}) ->
-        AppDescFile = filename:join([RootDir, "lib", AppName ++ "-" ++ AppVsn, "ebin", AppName ++ ".app"]),
+    lists:map(fun(Lib) ->
+        AppName = lib_app_name(Lib),
+        AppVsn = lib_app_vsn(Lib),
+        AppDescFile = filename:join([RootDir, "lib", concat([AppName, "-", AppVsn]), "ebin", concat([AppName, ".app"])]),
         case file:consult(AppDescFile) of
             {ok, [AppDesc]} -> AppDesc;
             {error, Reason} ->
@@ -55,7 +58,7 @@ make_mod_app_mapping(AppDescList, RootDir) ->
         Mods = emqx_relup_utils:assert_propl_get(modules, Attrs, no_modules_in_app_desc, #{app => AppName}),
         AppVsn = emqx_relup_utils:assert_propl_get(vsn, Attrs, no_vsn_in_app_desc, #{app => AppName}),
         BeamFile = fun(Mod) ->
-            filename:join([RootDir, "lib", AppName ++ "-" ++ AppVsn, "ebin", Mod ++ ".beam"])
+            filename:join([RootDir, "lib", concat([AppName, "-", AppVsn]), "ebin", concat([Mod, code:objfile_extension()])])
         end,
         ModMaps = maps:from_list([{M, {AppName, AppVsn, BeamFile(M)}} || M <- Mods]),
         maps:merge(Map, ModMaps)

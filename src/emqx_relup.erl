@@ -27,28 +27,34 @@ upgrade(TargetVsn) ->
         {error, Reason} ->
             ?PRINT("[ERROR] check upgrade failed, reason: ~p", [Reason]),
             {error, Reason};
-        ok ->
+        {ok, UnpackDir} ->
             ?PRINT("[INFO] Hot upgrading emqx from current version: ~p to target version: ~p",
                 [CurrVsn, TargetVsn]),
-            try emqx_relup_handler:perform_upgrade(TargetVsn) of
-                {ok, UnpackDir} ->
-                    emqx_relup_handler:permanent_upgrade(TargetVsn, UnpackDir),
-                    ?PRINT("[INFO] Successfully upgraded emqx to target version: ~p", [TargetVsn])
+            try emqx_relup_handler:perform_upgrade(TargetVsn, UnpackDir) of
+                ok ->
+                    case emqx_relup_handler:permanent_upgrade(TargetVsn, UnpackDir) of
+                        ok ->
+                            ?PRINT("[INFO] Successfully upgraded emqx to target version: ~p", [TargetVsn]),
+                            ok;
+                        {error, Reason} ->
+                            ?PRINT("[ERROR] permanent release failed, reason: ~p", [Reason]),
+                            {error, Reason}
+                    end;
                 {error, Reason} = Err ->
-                    ?PRINT("[ERROR] upgrade failed, reason: ~p", [Reason]),
-                    Err;
+                    ?PRINT("[ERROR] perform upgrade failed, reason: ~p", [Reason]),
+                    Err
             catch
                 throw:Reason ->
                     restart_vm(Reason),
                     {error, Reason};
                 Err:Reason:ST ->
-                    restart_vm({Err, Reason, ST})
+                    restart_vm({Err, Reason, ST}),
                     {error, {Err, Reason, ST}}
             end
     end.
 
 restart_vm(Reason) ->
-    ?PRINT("[ERROR] upgrade failed, reason: ~p, restart VM now!", [Reason]),
+    ?PRINT("[ERROR] upgrade failed, restart VM now! Reason: ~p", [Reason]),
     %% Maybe we can rollback the system rather than restart the VM. Here we simply
     %% restart the VM because if we reload the modules we just upgraded,
     %% some processes will probably be killed as they are still runing old code.
