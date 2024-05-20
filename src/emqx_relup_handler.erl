@@ -297,13 +297,13 @@ prepare_code_change([{restart_application, AppName} | CodeChanges], LibModInfo, 
     CodeChanges1 = [{load_module, Mod} || Mod <- Mods] ++ CodeChanges,
     ExpandedInstrs = [{stop_app, AppName}, {remove_app, AppName} | CodeChanges1] ++ [{start_app, AppName}],
     prepare_code_change(ExpandedInstrs, LibModInfo, ModProcs, Instrs);
-prepare_code_change([{update, Mod, Change} = Instr | CodeChanges], LibModInfo, ModProcs, Instrs) ->
+prepare_code_change([{update, Mod, Change} | CodeChanges], LibModInfo, ModProcs, Instrs) ->
     Pids = pids_of_callback_mod(Mod, ModProcs),
     ExpandedInstrs = [{suspend, Pids}, {load_module, Mod}, {code_change, Pids, Mod, Change},
                       {resume, Pids}] ++ CodeChanges,
-    prepare_code_change(ExpandedInstrs, LibModInfo, ModProcs, ExpandedInstrs ++ [Instr | Instrs]);
+    prepare_code_change(ExpandedInstrs, LibModInfo, ModProcs, Instrs);
 prepare_code_change([Instr | CodeChanges], LibModInfo, ModProcs, Instrs) ->
-    prepare_code_change(CodeChanges, LibModInfo, ModProcs, [Instr | Instrs]);
+    prepare_code_change(CodeChanges, LibModInfo, ModProcs, [assert_valid_instrs(Instr) | Instrs]);
 prepare_code_change([], _, _, Instrs) ->
     lists:reverse(Instrs).
 
@@ -326,6 +326,24 @@ load_object_code(Mod, #{mod_app_mapping := ModAppMapping}) ->
             end;
         undefined -> throw({module_not_found, Mod})
     end.
+
+assert_valid_instrs({load, _, _, _} = Instr) ->
+    Instr;
+assert_valid_instrs({suspend, Pids} = Instr) when is_list(Pids) ->
+    Instr;
+assert_valid_instrs({resume, Pids} = Instr) when is_list(Pids) ->
+    Instr;
+assert_valid_instrs({code_change, Pids, Mod, {advanced, _Extra}} = Instr)
+        when is_list(Pids), is_atom(Mod) ->
+    Instr;
+assert_valid_instrs({stop_app, AppName} = Instr) when is_atom(AppName) ->
+    Instr;
+assert_valid_instrs({remove_app, AppName} = Instr) when is_atom(AppName) ->
+    Instr;
+assert_valid_instrs({start_app, AppName} = Instr) when is_atom(AppName) ->
+    Instr;
+assert_valid_instrs(Instr) ->
+    throw({invalid_instr, Instr}).
 
 eval([]) ->
     ok;
