@@ -1,4 +1,4 @@
--module(emqx_relup).
+-module(emqx_relup_main).
 
 %% for #message{} record
 %% no need for this include if we call emqx_message:to_map/1 to convert it to a map
@@ -22,19 +22,20 @@ unload() ->
     ok.
 
 upgrade(TargetVsn) ->
+    RootDir = code:root_dir(),
     CurrVsn = emqx_release:version(),
-    case emqx_relup_handler:check_upgrade(TargetVsn) of
+    case emqx_relup_handler:check_upgrade(TargetVsn, RootDir) of
         {error, Reason} ->
             ?PRINT("[ERROR] check upgrade failed, reason: ~p", [Reason]),
             {error, Reason};
         {ok, UnpackDir} ->
-            ?PRINT("[INFO] Hot upgrading emqx from current version: ~p to target version: ~p",
+            ?PRINT("[INFO] hot upgrading emqx from current version: ~p to target version: ~p",
                 [CurrVsn, TargetVsn]),
-            try emqx_relup_handler:perform_upgrade(TargetVsn, UnpackDir) of
+            try emqx_relup_handler:perform_upgrade(TargetVsn, RootDir, UnpackDir) of
                 ok ->
-                    case emqx_relup_handler:permanent_upgrade(TargetVsn, UnpackDir) of
+                    case emqx_relup_handler:permanent_upgrade(TargetVsn, RootDir, UnpackDir) of
                         ok ->
-                            ?PRINT("[INFO] Successfully upgraded emqx to target version: ~p", [TargetVsn]),
+                            ?PRINT("[INFO] successfully upgraded emqx to target version: ~p", [TargetVsn]),
                             ok;
                         {error, Reason} ->
                             ?PRINT("[ERROR] permanent release failed, reason: ~p", [Reason]),

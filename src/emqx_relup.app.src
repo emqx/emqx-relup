@@ -3,7 +3,7 @@
   {vsn, "0.1.0"},
   {modules, []},
   {registered, [emqx_relup_sup]},
-  {applications, [kernel, stdlib, map_sets]},
+  {applications, [kernel, stdlib, emqx]},
   {mod, {emqx_relup_app, []}},
   {env, []},
   {licenses, ["Apache-2.0"]},

@@ -10,9 +10,9 @@
         , terminate/2
         ]).
 
--export([ check_upgrade/1
-        , perform_upgrade/2
-        , permanent_upgrade/2
+-export([ check_upgrade/2
+        , perform_upgrade/3
+        , permanent_upgrade/3
         ]).
 
 -import(lists, [concat/1]).
@@ -29,11 +29,10 @@
 start_link() ->
     gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
 
-check_upgrade(TargetVsn) ->
+check_upgrade(TargetVsn, RootDir) ->
     try
-        RootDir = code:root_dir(),
         {ok, UnpackDir} = unpack_release(TargetVsn),
-        ok = check_write_permission(),
+        ok = check_write_permission(RootDir),
         ok = check_otp_comaptibility(RootDir, UnpackDir, TargetVsn),
         {ok, UnpackDir}
     catch
@@ -43,14 +42,19 @@ check_upgrade(TargetVsn) ->
             {error, {Err, Reason, ST}}
     end.
 
-perform_upgrade(TargetVsn, UnpackDir) ->
+perform_upgrade(TargetVsn, RootDir, UnpackDir) ->
+    perform_upgrade(TargetVsn, RootDir, UnpackDir, #{}).
+
+perform_upgrade(TargetVsn, RootDir, UnpackDir, Opts) ->
+    UpgradeType = maps:get(upgrade_type, Opts, relup),
     try 
-        RootDir = code:root_dir(),
-        {Relup, _OldRel, NewRel} = setup_files(RootDir, UnpackDir, TargetVsn),
+        {Relup, _OldRel, NewRel} = deploy_files(TargetVsn, RootDir, UnpackDir),
         emqx_relup_libs:make_libs_info(NewRel, RootDir)
     of
-        LibModInfo ->
-            eval_relup(TargetVsn, Relup, LibModInfo)
+        LibModInfo when UpgradeType =:= relup ->
+            eval_relup(TargetVsn, Relup, LibModInfo);
+        _ when UpgradeType =:= deploy_files_only ->
+            ok
     catch
         throw:Reason ->
             {error, Reason};
@@ -80,8 +84,7 @@ terminate(_Reason, _State) ->
 %%==============================================================================
 %% Check Upgrade
 %%==============================================================================
-check_write_permission() ->
-    RootDir = code:root_dir(),
+check_write_permission(RootDir) ->
     SubDirs = ["lib", "releases", "bin"],
     lists:foreach(fun(SubDir) ->
         do_check_write_permission(RootDir, SubDir)
@@ -135,9 +138,9 @@ assert_same_os_arch(CurrBuildInfo, NewBuildInfo) ->
     end.
 
 %%==============================================================================
-%% Setup Upgrade
+%% Deploy Libs and Release Files
 %%==============================================================================
-setup_files(RootDir, UnpackDir, TargetVsn) ->
+deploy_files(TargetVsn, RootDir, UnpackDir) ->
     {ok, OldRel} = consult_rel_file(RootDir, emqx_release:version()),
     {ok, NewRel} = consult_rel_file(UnpackDir, TargetVsn),
     ok = copy_libs(TargetVsn, RootDir, UnpackDir, OldRel, NewRel),
@@ -183,7 +186,7 @@ copy_lib(NLib, RootDir, UnpackDir) ->
     LibDirName = concat([emqx_relup_libs:lib_app_name(NLib), "-", emqx_relup_libs:lib_app_vsn(NLib)]),
     DstDir = filename:join([RootDir, "lib", LibDirName]),
     SrcDir = filename:join([UnpackDir, "lib", LibDirName]),
-    logger:warning("copy lib from ~s to ~s", [SrcDir, DstDir]),
+    logger:notice("copy lib from ~s to ~s", [SrcDir, DstDir]),
     emqx_relup_file_utils:cp_r(SrcDir, DstDir).
 
 load_relup_file(TargetVsn, RootDir) ->
@@ -213,8 +216,8 @@ copy_release(TargetVsn, RootDir, UnpackDir) ->
 %%==============================================================================
 %% Permanent Release
 %%==============================================================================
-permanent_upgrade(TargetVsn, UnpackDir) ->
-    overwrite_files(TargetVsn, code:root_dir(), UnpackDir).
+permanent_upgrade(TargetVsn, RootDir, UnpackDir) ->
+    overwrite_files(TargetVsn, RootDir, UnpackDir).
 
 overwrite_files(_TargetVsn, RootDir, UnpackDir) ->
     %% The RELEASES file is not required by OTP to start a release but it is
@@ -289,7 +292,7 @@ eval_code_changes(Relup, LibModInfo) ->
 
 prepare_code_change([{load_module, Mod} | CodeChanges], LibModInfo, ModProcs, Instrs) ->
     {Bin, FName} = load_object_code(Mod, LibModInfo),
-    %% TODO: stop the upgrade if some processes are still running the old code
+    %% TODO: we can chose to stop if some processes are still running old code
     _ = code:soft_purge(Mod),
     prepare_code_change(CodeChanges, LibModInfo, ModProcs, [{load, Mod, Bin, FName} | Instrs]);
 prepare_code_change([{restart_application, AppName} | CodeChanges], LibModInfo, ModProcs, Instrs) ->
@@ -306,6 +309,12 @@ prepare_code_change([Instr | CodeChanges], LibModInfo, ModProcs, Instrs) ->
     prepare_code_change(CodeChanges, LibModInfo, ModProcs, [assert_valid_instrs(Instr) | Instrs]);
 prepare_code_change([], _, _, Instrs) ->
     lists:reverse(Instrs).
+
+curr_mod_md5(Mod) ->
+    case code:is_loaded(Mod) of
+        {file, _} -> code:module_md5(Mod);
+        false -> not_loaded
+    end.
 
 pids_of_callback_mod(Mod, ModProcs) ->
     lists:filtermap(fun({_Sup, _Name, Pid, Mods}) ->
@@ -348,9 +357,15 @@ assert_valid_instrs(Instr) ->
 eval([]) ->
     ok;
 eval([{load, Mod, Bin, FName} | Instrs]) ->
-    % load_binary kills all procs running old code
-    {module, _} = code:load_binary(Mod, FName, Bin),
-    eval(Instrs);
+    case code:module_md5(Bin) =:= curr_mod_md5(Mod) of
+        true ->
+            logger:notice("there's no change in module: ~p, skip loading", [Mod]),
+            ok;
+        false ->
+            % load_binary kills all procs running old code
+            {module, _} = code:load_binary(Mod, FName, Bin),
+            eval(Instrs)
+    end;
 eval([{suspend, Pids} | Instrs]) ->
     lists:foreach(fun(Pid) ->
             case catch sys:suspend(Pid) of

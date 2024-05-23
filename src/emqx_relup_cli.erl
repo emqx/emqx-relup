@@ -5,7 +5,7 @@
 -export([cmd/1]).
 
 cmd(["upgrade", TargetVsn]) ->
-    emqx_relup:upgrade(TargetVsn),
+    emqx_relup_main:upgrade(TargetVsn),
     emqx_ctl:print("ok");
 
 cmd(_) ->
