@@ -312,7 +312,7 @@ prepare_code_change([], _, _, Instrs) ->
 
 curr_mod_md5(Mod) ->
     case code:is_loaded(Mod) of
-        {file, _} -> code:module_md5(Mod);
+        {file, _} -> Mod:module_info(md5);
         false -> not_loaded
     end.
 
