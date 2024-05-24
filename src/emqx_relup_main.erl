@@ -1,12 +1,5 @@
 -module(emqx_relup_main).
 
-%% for #message{} record
-%% no need for this include if we call emqx_message:to_map/1 to convert it to a map
--include_lib("emqx/include/emqx.hrl").
-
-%% for logging
--include_lib("emqx/include/logger.hrl").
-
 -export([ load/1
         , unload/0
         , upgrade/1
