@@ -10,4 +10,23 @@ start_link() ->
     supervisor:start_link({local, ?MODULE}, ?MODULE, []).
 
 init([]) ->
-    {ok, { {one_for_all, 0, 1}, []} }.
+    RuleEngineRegistry = worker_spec(emqx_relup_main),
+    SupFlags = #{
+        strategy => one_for_one,
+        intensity => 20,
+        period => 10
+    },
+    Children = [
+        RuleEngineRegistry
+    ],
+    {ok, {SupFlags, Children}}.
+
+worker_spec(Mod) ->
+    #{
+        id => Mod,
+        start => {Mod, start_link, []},
+        restart => permanent,
+        shutdown => 5_000,
+        type => worker,
+        modules => [Mod]
+    }.

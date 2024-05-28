@@ -1,39 +1,21 @@
 -module(emqx_relup_handler).
 
--behaviour(gen_server).
-
--export([ start_link/0
-        , init/1
-        , handle_call/3
-        , handle_cast/2
-        , handle_info/2
-        , terminate/2
-        ]).
-
--export([ check_upgrade/2
-        , perform_upgrade/3
-        , permanent_upgrade/3
+-export([ check_upgrade/3
+        , perform_upgrade/4
+        , permanent_upgrade/4
         ]).
 
 -import(lists, [concat/1]).
 -import(emqx_relup_utils, [str/1]).
 
--type state() :: #{
-    upgrade_path => list(string()),
-    current_vsn => string()
-}.
-
 %%==============================================================================
 %% API
 %%==============================================================================
-start_link() ->
-    gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
-
-check_upgrade(TargetVsn, RootDir) ->
+check_upgrade(CurrVsn, TargetVsn, RootDir) ->
     try
         {ok, UnpackDir} = unpack_release(TargetVsn),
         ok = check_write_permission(RootDir),
-        ok = check_otp_comaptibility(RootDir, UnpackDir, TargetVsn),
+        ok = check_otp_comaptibility(CurrVsn, RootDir, UnpackDir, TargetVsn),
         {ok, UnpackDir}
     catch
         throw:Reason ->
@@ -42,17 +24,17 @@ check_upgrade(TargetVsn, RootDir) ->
             {error, {Err, Reason, ST}}
     end.
 
-perform_upgrade(TargetVsn, RootDir, UnpackDir) ->
-    perform_upgrade(TargetVsn, RootDir, UnpackDir, #{}).
+perform_upgrade(CurrVsn, TargetVsn, RootDir, UnpackDir) ->
+    perform_upgrade(CurrVsn, TargetVsn, RootDir, UnpackDir, #{}).
 
-perform_upgrade(TargetVsn, RootDir, UnpackDir, Opts) ->
+perform_upgrade(CurrVsn, TargetVsn, RootDir, UnpackDir, Opts) ->
     UpgradeType = maps:get(upgrade_type, Opts, relup),
     try 
-        {Relup, _OldRel, NewRel} = deploy_files(TargetVsn, RootDir, UnpackDir),
+        {Relup, _OldRel, NewRel} = deploy_files(CurrVsn, TargetVsn, RootDir, UnpackDir),
         emqx_relup_libs:make_libs_info(NewRel, RootDir)
     of
         LibModInfo when UpgradeType =:= relup ->
-            eval_relup(TargetVsn, Relup, LibModInfo);
+            eval_relup(CurrVsn, TargetVsn, Relup, LibModInfo);
         _ when UpgradeType =:= deploy_files_only ->
             ok
     catch
@@ -61,25 +43,6 @@ perform_upgrade(TargetVsn, RootDir, UnpackDir, Opts) ->
         Err:Reason:ST ->
             {error, {Err, Reason, ST}}
     end.
-
-%%==============================================================================
-%% gen_server callbacks
-%%==============================================================================
--spec init(list()) -> {ok, state()}.
-init([]) ->
-    {ok, undefined}.
-
-handle_call(_Request, _From, State) ->
-    {reply, ok, State}.
-
-handle_cast(_Msg, State) ->
-    {noreply, State}.
-
-handle_info(_Info, State) ->
-    {noreply, State}.
-
-terminate(_Reason, _State) ->
-    ok.
 
 %%==============================================================================
 %% Check Upgrade
@@ -103,8 +66,8 @@ do_check_write_permission(RootDir, SubDir) ->
             ok = file:delete(File)
     end.
 
-check_otp_comaptibility(RootDir, UnpackDir, TargetVsn) ->
-    CurrBuildInfo = read_build_info(RootDir, emqx_release:version()),
+check_otp_comaptibility(CurrVsn, RootDir, UnpackDir, TargetVsn) ->
+    CurrBuildInfo = read_build_info(RootDir, CurrVsn),
     NewBuildInfo = read_build_info(UnpackDir, TargetVsn),
     CurrOTPVsn = maps:get("erlang", CurrBuildInfo),
     NewOTPVsn = maps:get("erlang", NewBuildInfo),
@@ -140,12 +103,12 @@ assert_same_os_arch(CurrBuildInfo, NewBuildInfo) ->
 %%==============================================================================
 %% Deploy Libs and Release Files
 %%==============================================================================
-deploy_files(TargetVsn, RootDir, UnpackDir) ->
-    {ok, OldRel} = consult_rel_file(RootDir, emqx_release:version()),
+deploy_files(CurrVsn, TargetVsn, RootDir, UnpackDir) ->
+    {ok, OldRel} = consult_rel_file(RootDir, CurrVsn),
     {ok, NewRel} = consult_rel_file(UnpackDir, TargetVsn),
     ok = copy_libs(TargetVsn, RootDir, UnpackDir, OldRel, NewRel),
     ok = copy_release(TargetVsn, RootDir, UnpackDir),
-    {load_relup_file(TargetVsn, RootDir), OldRel, NewRel}.
+    {load_relup_file(CurrVsn, TargetVsn, RootDir), OldRel, NewRel}.
 
 unpack_release(TargetVsn) ->
     TarFile = filename:join([code:priv_dir(emqx_relup), concat([TargetVsn, ".tar.gz"])]),
@@ -189,8 +152,7 @@ copy_lib(NLib, RootDir, UnpackDir) ->
     logger:notice("copy lib from ~s to ~s", [SrcDir, DstDir]),
     emqx_relup_file_utils:cp_r(SrcDir, DstDir).
 
-load_relup_file(TargetVsn, RootDir) ->
-    CurrVsn = emqx_release:version(),
+load_relup_file(CurrVsn, TargetVsn, RootDir) ->
     RelupFile = filename:join([RootDir, "releases", TargetVsn, concat([TargetVsn, ".relup"])]),
     case file:consult(RelupFile) of
         {ok, [RelupL]} ->
@@ -216,7 +178,7 @@ copy_release(TargetVsn, RootDir, UnpackDir) ->
 %%==============================================================================
 %% Permanent Release
 %%==============================================================================
-permanent_upgrade(TargetVsn, RootDir, UnpackDir) ->
+permanent_upgrade(_CurrVsn, TargetVsn, RootDir, UnpackDir) ->
     overwrite_files(TargetVsn, RootDir, UnpackDir).
 
 overwrite_files(_TargetVsn, RootDir, UnpackDir) ->
@@ -273,22 +235,21 @@ copy_file(SrcFile, DstFile, Copied) ->
 %%==============================================================================
 %% Eval Relup Instructions
 %%==============================================================================
-eval_relup(TargetVsn, Relup, LibModInfo) ->
-    OldVsn = emqx_release:version(),
+eval_relup(CurrVsn, TargetVsn, Relup, LibModInfo) ->
     %% NOTE: Exceptions in eval_code_changes/2 will not be caught and the VM will be restarted!
-    ok = eval_code_changes(Relup, LibModInfo),
-    try eval_post_upgrade_actions(TargetVsn, OldVsn, Relup)
+    ok = eval_code_changes(Relup, LibModInfo, CurrVsn),
+    try eval_post_upgrade_actions(TargetVsn, CurrVsn, Relup)
     catch
         Err:Reason:ST ->
             {error, {eval_post_upgrade_actions, {Err, Reason, ST}}}
     end.
 
-eval_code_changes(Relup, LibModInfo) ->
+eval_code_changes(Relup, LibModInfo, CurrVsn) ->
     CodeChanges = maps:get(code_changes, Relup),
     ModProcs = release_handler_1:get_supervised_procs(),
     Instrs = prepare_code_change(CodeChanges, LibModInfo, ModProcs, []),
     ok = write_troubleshoot_file("relup", strip_instrs(Instrs)),
-    eval(Instrs).
+    eval(Instrs, #{from_vsn => CurrVsn}).
 
 prepare_code_change([{load_module, Mod} | CodeChanges], LibModInfo, ModProcs, Instrs) ->
     {Bin, FName} = load_object_code(Mod, LibModInfo),
@@ -325,7 +286,7 @@ pids_of_callback_mod(Mod, ModProcs) ->
         end, ModProcs).
 
 load_object_code(Mod, #{mod_app_mapping := ModAppMapping}) ->
-    case maps:get(Mod, ModAppMapping) of
+    case maps:get(Mod, ModAppMapping, undefined) of
         {_AppName, _AppVsn, File} ->
             case erl_prim_loader:get_file(File) of
                 {ok, Bin, FName2} ->
@@ -354,9 +315,9 @@ assert_valid_instrs({start_app, AppName} = Instr) when is_atom(AppName) ->
 assert_valid_instrs(Instr) ->
     throw({invalid_instr, Instr}).
 
-eval([]) ->
+eval([], _Opts) ->
     ok;
-eval([{load, Mod, Bin, FName} | Instrs]) ->
+eval([{load, Mod, Bin, FName} | Instrs], Opts) ->
     case code:module_md5(Bin) =:= curr_mod_md5(Mod) of
         true ->
             logger:notice("there's no change in module: ~p, skip loading", [Mod]),
@@ -364,9 +325,9 @@ eval([{load, Mod, Bin, FName} | Instrs]) ->
         false ->
             % load_binary kills all procs running old code
             {module, _} = code:load_binary(Mod, FName, Bin),
-            eval(Instrs)
+            eval(Instrs, Opts)
     end;
-eval([{suspend, Pids} | Instrs]) ->
+eval([{suspend, Pids} | Instrs], Opts) ->
     lists:foreach(fun(Pid) ->
             case catch sys:suspend(Pid) of
                 ok -> {true, Pid};
@@ -376,19 +337,18 @@ eval([{suspend, Pids} | Instrs]) ->
                     catch sys:resume(Pid)
             end
         end, Pids),
-    eval(Instrs);
-eval([{resume, Pids} | Instrs]) ->
+    eval(Instrs, Opts);
+eval([{resume, Pids} | Instrs], Opts) ->
     lists:foreach(fun(Pid) ->
             catch sys:resume(Pid)
         end, Pids),
-    eval(Instrs);
-eval([{code_change, Pids, Mod, {advanced, Extra}} | Instrs]) ->
-    FromVsn = emqx_release:version(),
+    eval(Instrs, Opts);
+eval([{code_change, Pids, Mod, {advanced, Extra}} | Instrs], #{from_vsn := FromVsn} = Opts) ->
     lists:foreach(fun(Pid) ->
             change_code(Pid, Mod, FromVsn, Extra)
         end, Pids),
-    eval(Instrs);
-eval([{stop_app, AppName} | Instrs]) ->
+    eval(Instrs, Opts);
+eval([{stop_app, AppName} | Instrs], Opts) ->
     case is_excluded_app(AppName) orelse application:stop(AppName) of
         true -> ok;
         ok -> ok;
@@ -396,8 +356,8 @@ eval([{stop_app, AppName} | Instrs]) ->
         {error, Reason} ->
             throw({failed_to_stop_app, #{app => AppName, reason => Reason}})
     end,
-    eval(Instrs);
-eval([{remove_app, AppName} | Instrs]) ->
+    eval(Instrs, Opts);
+eval([{remove_app, AppName} | Instrs], Opts) ->
     case is_excluded_app(AppName) orelse application:get_key(AppName, modules) of
         true -> ok;
         undefined -> ok;
@@ -407,14 +367,14 @@ eval([{remove_app, AppName} | Instrs]) ->
                     true = code:delete(M)
                 end, Mods)
     end,
-    eval(Instrs);
-eval([{start_app, AppName} | Instrs]) ->
+    eval(Instrs, Opts);
+eval([{start_app, AppName} | Instrs], Opts) ->
     case is_excluded_app(AppName) of
         true -> ok;
         false ->
             {ok, _} = application:ensure_all_started(AppName)
     end,
-    eval(Instrs).
+    eval(Instrs, Opts).
 
 change_code(Pid, Mod, FromVsn, Extra) ->
     case sys:change_code(Pid, Mod, FromVsn, Extra) of
@@ -428,13 +388,13 @@ change_code(Pid, Mod, FromVsn, Extra) ->
 %%==============================================================================
 %% Eval Post Upgrade Actions
 %%==============================================================================
-eval_post_upgrade_actions(TargetVsn, OldVsn, Relup) ->
+eval_post_upgrade_actions(TargetVsn, CurrVsn, Relup) ->
     case get_upgrade_mod(TargetVsn) of
         {ok, Mod} ->
             try
                 PostUpgradeActions = maps:get(post_upgrade_callbacks, Relup),
                 _ = lists:foldl(fun({Func, RevertFunc}, Rollbacks) ->
-                    _ = apply_func(Mod, Func, [OldVsn], Rollbacks),
+                    _ = apply_func(Mod, Func, [CurrVsn], Rollbacks),
                     [RevertFunc | Rollbacks]
                 end, [], PostUpgradeActions),
                 ok
@@ -443,7 +403,7 @@ eval_post_upgrade_actions(TargetVsn, OldVsn, Relup) ->
                 %% we have a clean system before we try the upgrade again.
                 throw:{apply_func, #{rollbacks := Rollbacks} = Details} ->
                     lists:foreach(fun(RevertFunc) ->
-                        apply_func(Mod, RevertFunc, [OldVsn], log)
+                        apply_func(Mod, RevertFunc, [CurrVsn], log)
                     end, Rollbacks),
                     {error, {eval_post_upgrade_actions, maps:remove(rollbacks, Details)}};
                 Err:Reason:ST ->
@@ -469,6 +429,8 @@ apply_func(Mod, Func, Args, Rollbacks) ->
     end.
 
 get_upgrade_mod(TargetVsn) ->
+    %% If we find a issue in the emqx_post_upgrade, we can quickly fix it by adding
+    %% a `emqx_post_upgrade_<TargeVsn>.erl` module in this plugin.
     TaggedMod = list_to_atom(concat(["emqx_post_upgrade_", TargetVsn])),
     Mod = emqx_post_upgrade,
     case {code:is_loaded(TaggedMod), code:is_loaded(Mod)} of
