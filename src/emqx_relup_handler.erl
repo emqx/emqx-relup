@@ -1,6 +1,6 @@
 -module(emqx_relup_handler).
 
--export([ check_upgrade/3
+-export([ check_and_unpack/4
         , perform_upgrade/4
         , permanent_upgrade/4
         ]).
@@ -11,12 +11,17 @@
 %%==============================================================================
 %% API
 %%==============================================================================
-check_upgrade(CurrVsn, TargetVsn, RootDir) ->
+check_and_unpack(CurrVsn, TargetVsn, RootDir, Opts) ->
     try
+        ok = assert_not_same_vsn(CurrVsn, TargetVsn),
         {ok, UnpackDir} = unpack_release(TargetVsn),
         ok = check_write_permission(RootDir),
         ok = check_otp_comaptibility(CurrVsn, RootDir, UnpackDir, TargetVsn),
-        {ok, UnpackDir}
+        {ok, OldRel} = consult_rel_file(RootDir, CurrVsn),
+        {ok, NewRel} = consult_rel_file(UnpackDir, TargetVsn),
+        ok = deploy_files(TargetVsn, RootDir, UnpackDir, OldRel, NewRel, Opts),
+        Relup = load_relup_file(CurrVsn, TargetVsn, get_deploy_dir(RootDir, TargetVsn, Opts)),
+        {ok, Opts#{unpack_dir => UnpackDir, old_rel => OldRel, new_rel => NewRel, relup => Relup}}
     catch
         throw:Reason ->
             {error, Reason};
@@ -24,18 +29,16 @@ check_upgrade(CurrVsn, TargetVsn, RootDir) ->
             {error, {Err, Reason, ST}}
     end.
 
-perform_upgrade(CurrVsn, TargetVsn, RootDir, UnpackDir) ->
-    perform_upgrade(CurrVsn, TargetVsn, RootDir, UnpackDir, #{}).
-
-perform_upgrade(CurrVsn, TargetVsn, RootDir, UnpackDir, Opts) ->
-    UpgradeType = maps:get(upgrade_type, Opts, relup),
+perform_upgrade(CurrVsn, TargetVsn, RootDir, Opts) ->
     try 
-        {Relup, _OldRel, NewRel} = deploy_files(CurrVsn, TargetVsn, RootDir, UnpackDir),
-        emqx_relup_libs:make_libs_info(NewRel, RootDir)
+        UpgradeType = maps:get(upgrade_type, Opts, eval_upgrade),
+        #{new_rel := NewRel, relup := Relup} = Opts,
+        Dir = get_deploy_dir(RootDir, TargetVsn, Opts),
+        {emqx_relup_libs:make_libs_info(NewRel, Dir), UpgradeType}
     of
-        LibModInfo when UpgradeType =:= relup ->
+        {LibModInfo, eval_upgrade} ->
             eval_relup(CurrVsn, TargetVsn, Relup, LibModInfo);
-        _ when UpgradeType =:= deploy_files_only ->
+        {_, deploy_only} ->
             ok
     catch
         throw:Reason ->
@@ -47,23 +50,33 @@ perform_upgrade(CurrVsn, TargetVsn, RootDir, UnpackDir, Opts) ->
 %%==============================================================================
 %% Check Upgrade
 %%==============================================================================
+assert_not_same_vsn(TargetVsn, TargetVsn) ->
+    throw({already_upgraded_to_target_vsn, TargetVsn});
+assert_not_same_vsn(_CurrVsn, _TargetVsn) ->
+    ok.
+
 check_write_permission(RootDir) ->
-    SubDirs = ["lib", "releases", "bin"],
+    SubDirs = ["relup"],
     lists:foreach(fun(SubDir) ->
         do_check_write_permission(RootDir, SubDir)
     end, SubDirs).
 
 do_check_write_permission(RootDir, SubDir) ->
     File = filename:join([RootDir, SubDir, "relup_test_perm"]),
-    case file:write_file(File, "t") of
-        {error, eacces} ->
-            throw({no_write_permission, #{dir => SubDir,
-                msg => "Please set emqx as the owner of the dir by running:"
-                       " 'sudo chown -R emqx:emqx " ++ SubDir ++ "'"}});
-        {error, Reason} ->
-            throw({cannot_write_file, #{dir => SubDir, reason => Reason}});
+    case filelib:ensure_dir(File) of
         ok ->
-            ok = file:delete(File)
+            case file:write_file(File, "t") of
+                {error, eacces} ->
+                    throw({no_write_permission, #{dir => SubDir,
+                        msg => "Please set emqx as the owner of the dir by running:"
+                            " 'sudo chown -R emqx:emqx " ++ SubDir ++ "'"}});
+                {error, Reason} ->
+                    throw({cannot_write_file, #{dir => SubDir, reason => Reason}});
+                ok ->
+                    ok = file:delete(File)
+            end;
+        {error, Reason} ->
+            throw({cannot_create_dir, #{dir => SubDir, reason => Reason}})
     end.
 
 check_otp_comaptibility(CurrVsn, RootDir, UnpackDir, TargetVsn) ->
@@ -103,12 +116,14 @@ assert_same_os_arch(CurrBuildInfo, NewBuildInfo) ->
 %%==============================================================================
 %% Deploy Libs and Release Files
 %%==============================================================================
-deploy_files(CurrVsn, TargetVsn, RootDir, UnpackDir) ->
-    {ok, OldRel} = consult_rel_file(RootDir, CurrVsn),
-    {ok, NewRel} = consult_rel_file(UnpackDir, TargetVsn),
+deploy_files(TargetVsn, RootDir, UnpackDir, OldRel, NewRel, #{deploy_inplace := true}) ->
     ok = copy_libs(TargetVsn, RootDir, UnpackDir, OldRel, NewRel),
     ok = copy_release(TargetVsn, RootDir, UnpackDir),
-    {load_relup_file(CurrVsn, TargetVsn, RootDir), OldRel, NewRel}.
+    {OldRel, NewRel};
+deploy_files(TargetVsn, RootDir, UnpackDir, _OldRel, _NewRel, Opts) ->
+    DstDir = get_deploy_dir(RootDir, TargetVsn, Opts),
+    logger:notice("copy dir from ~s to ~s", [UnpackDir, DstDir]),
+    emqx_relup_file_utils:cp_r(UnpackDir, DstDir).
 
 unpack_release(TargetVsn) ->
     TarFile = filename:join([code:priv_dir(emqx_relup), concat([TargetVsn, ".tar.gz"])]),
@@ -152,8 +167,8 @@ copy_lib(NLib, RootDir, UnpackDir) ->
     logger:notice("copy lib from ~s to ~s", [SrcDir, DstDir]),
     emqx_relup_file_utils:cp_r(SrcDir, DstDir).
 
-load_relup_file(CurrVsn, TargetVsn, RootDir) ->
-    RelupFile = filename:join([RootDir, "releases", TargetVsn, concat([TargetVsn, ".relup"])]),
+load_relup_file(CurrVsn, TargetVsn, Dir) ->
+    RelupFile = filename:join([Dir, "releases", TargetVsn, concat([TargetVsn, ".relup"])]),
     case file:consult(RelupFile) of
         {ok, [RelupL]} ->
             case lists:search(fun(#{target_version := TargetVsn0, from_version := FromVsn}) ->
@@ -178,8 +193,10 @@ copy_release(TargetVsn, RootDir, UnpackDir) ->
 %%==============================================================================
 %% Permanent Release
 %%==============================================================================
-permanent_upgrade(_CurrVsn, TargetVsn, RootDir, UnpackDir) ->
-    overwrite_files(TargetVsn, RootDir, UnpackDir).
+permanent_upgrade(_CurrVsn, TargetVsn, RootDir, #{deploy_inplace := true, unpack_dir := UnpackDir}) ->
+    overwrite_files(TargetVsn, RootDir, UnpackDir);
+permanent_upgrade(_CurrVsn, _TargetVsn, _RootDir, _) ->
+    ok.
 
 overwrite_files(_TargetVsn, RootDir, UnpackDir) ->
     %% The RELEASES file is not required by OTP to start a release but it is
@@ -445,6 +462,11 @@ get_upgrade_mod(TargetVsn) ->
 %%==============================================================================
 %% Internal functions
 %%==============================================================================
+get_deploy_dir(RootDir, _TargetVsn, #{deploy_inplace := true}) ->
+    RootDir;
+get_deploy_dir(RootDir, TargetVsn, _) ->
+    filename:join([RootDir, "relup", TargetVsn]).
+
 read_build_info(RootDir, Vsn) ->
     BuildInfoFile = filename:join([RootDir, "releases", Vsn, "BUILD_INFO"]),
     Lines = readlines(BuildInfoFile),

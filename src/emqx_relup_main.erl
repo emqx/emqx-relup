@@ -13,6 +13,7 @@
 -export([ load/1
         , unload/0
         , upgrade/1
+        , upgrade/2
         ]).
 
 -type state() :: #{}.
@@ -26,7 +27,10 @@ start_link() ->
     gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
 
 upgrade(TargetVsn) ->
-    gen_server:call(?MODULE, {upgrade, TargetVsn}, infinity).
+    upgrade(TargetVsn, #{deploy_inplace => false}).
+
+upgrade(TargetVsn, Opts) ->
+    gen_server:call(?MODULE, {upgrade, TargetVsn, Opts}, infinity).
 
 %% Called when the plugin application start
 load(_Env) ->
@@ -42,8 +46,8 @@ unload() ->
 init([]) ->
     {ok, #{}}.
 
-handle_call({upgrade, TargetVsn}, _From, State) ->
-    Reply = do_upgrade(emqx_release:version(), TargetVsn, code:root_dir()),
+handle_call({upgrade, TargetVsn, Opts}, _From, State) ->
+    Reply = do_upgrade(emqx_release:version(), TargetVsn, code:root_dir(), Opts),
     {reply, Reply, State};
 handle_call(_Request, _From, State) ->
     {reply, ok, State}.
@@ -57,17 +61,17 @@ handle_info(_Info, State) ->
 terminate(_Reason, _State) ->
     ok.
 
-do_upgrade(CurrVsn, TargetVsn, RootDir) ->
-    case emqx_relup_handler:check_upgrade(CurrVsn, TargetVsn, RootDir) of
+do_upgrade(CurrVsn, TargetVsn, RootDir, Opts) ->
+    case emqx_relup_handler:check_and_unpack(CurrVsn, TargetVsn, RootDir, Opts) of
         {error, Reason} ->
             ?PRINT("[ERROR] check upgrade failed, reason: ~p", [Reason]),
             {error, Reason};
-        {ok, UnpackDir} ->
+        {ok, Opts1} ->
             ?PRINT("[INFO] hot upgrading emqx from current version: ~p to target version: ~p",
                 [CurrVsn, TargetVsn]),
-            try emqx_relup_handler:perform_upgrade(CurrVsn, TargetVsn, RootDir, UnpackDir) of
+            try emqx_relup_handler:perform_upgrade(CurrVsn, TargetVsn, RootDir, Opts1) of
                 ok ->
-                    case emqx_relup_handler:permanent_upgrade(CurrVsn, TargetVsn, RootDir, UnpackDir) of
+                    case emqx_relup_handler:permanent_upgrade(CurrVsn, TargetVsn, RootDir, Opts1) of
                         ok ->
                             ?PRINT("[INFO] successfully upgraded emqx to target version: ~p", [TargetVsn]),
                             ok;

@@ -11,10 +11,10 @@
 
 -import(lists, [concat/1]).
 
-make_libs_info(Rel, RootDir) ->
-    AppDescList = make_app_desc_list(rel_libs(Rel), RootDir),
+make_libs_info(Rel, Dir) ->
+    AppDescList = make_app_desc_list(rel_libs(Rel), Dir),
     #{
-        mod_app_mapping => make_mod_app_mapping(AppDescList, RootDir),
+        mod_app_mapping => make_mod_app_mapping(AppDescList, Dir),
         app_desc_list => AppDescList
     }.
 
@@ -41,11 +41,11 @@ lib_app_vsn(Lib) ->
 %%==============================================================================
 %% Internal functions
 %%==============================================================================
-make_app_desc_list(Libs, RootDir) ->
+make_app_desc_list(Libs, Dir) ->
     lists:map(fun(Lib) ->
         AppName = lib_app_name(Lib),
         AppVsn = lib_app_vsn(Lib),
-        AppDescFile = filename:join([RootDir, "lib", concat([AppName, "-", AppVsn]), "ebin", concat([AppName, ".app"])]),
+        AppDescFile = filename:join([Dir, "lib", concat([AppName, "-", AppVsn]), "ebin", concat([AppName, ".app"])]),
         case file:consult(AppDescFile) of
             {ok, [AppDesc]} -> AppDesc;
             {error, Reason} ->
@@ -53,12 +53,12 @@ make_app_desc_list(Libs, RootDir) ->
         end
     end, Libs).
 
-make_mod_app_mapping(AppDescList, RootDir) ->
+make_mod_app_mapping(AppDescList, Dir) ->
     lists:foldl(fun({application, AppName, Attrs}, Map) ->
         Mods = emqx_relup_utils:assert_propl_get(modules, Attrs, no_modules_in_app_desc, #{app => AppName}),
         AppVsn = emqx_relup_utils:assert_propl_get(vsn, Attrs, no_vsn_in_app_desc, #{app => AppName}),
         BeamFile = fun(Mod) ->
-            filename:join([RootDir, "lib", concat([AppName, "-", AppVsn]), "ebin", concat([Mod, code:objfile_extension()])])
+            filename:join([Dir, "lib", concat([AppName, "-", AppVsn]), "ebin", concat([Mod, code:objfile_extension()])])
         end,
         ModMaps = maps:from_list([{M, {AppName, AppVsn, BeamFile(M)}} || M <- Mods]),
         maps:merge(Map, ModMaps)
