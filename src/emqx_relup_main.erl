@@ -83,11 +83,9 @@ do_upgrade(CurrVsn, TargetVsn, RootDir, Opts) ->
                     Err
             catch
                 throw:Reason ->
-                    restart_vm(Reason),
-                    {error, Reason};
+                    restart_vm(Reason);
                 Err:Reason:ST ->
-                    restart_vm({Err, Reason, ST}),
-                    {error, {Err, Reason, ST}}
+                    restart_vm({Err, Reason, ST})
             end
     end.
 
@@ -96,4 +94,5 @@ restart_vm(Reason) ->
     %% Maybe we can rollback the system rather than restart the VM. Here we simply
     %% restart the VM because if we reload the modules we just upgraded,
     %% some processes will probably be killed as they are still runing old code.
-    init:restart().
+    init:restart(),
+    {error_vm_restarted, Reason}.

@@ -215,10 +215,21 @@ getopt_upgrade_path_file(RelupDir, RawArgs) ->
 validate_relup_file(_Relup) ->
     ok.
 
-normalize_code_changes(Instrucitons) ->
-    %% 1. remove duplicated instructions
-    %% 2. sort according to dependent relationship
-    Instrucitons.
+normalize_code_changes(CodeChanges) ->
+    %% TODO: sort instructions according to dependent relationship
+    inject_code_changes(CodeChanges).
+
+inject_code_changes(CodeChanges0) ->
+    CodeChanges1 = lists:filter(fun
+        ({load_module, emqx_release}) -> false;
+        ({load_module, emqx_post_upgrade}) -> false;
+        (_) -> true
+    end, CodeChanges0),
+    CodeChanges2 = append_to_tail({load_module, emqx_release}, CodeChanges1),
+    [{load_module, emqx_post_upgrade} | CodeChanges2].
+
+append_to_tail(Elm, List) ->
+    lists:reverse([Elm | lists:reverse(List)]).
 
 -spec format_error(any()) ->  iolist().
 format_error(Reason) ->
