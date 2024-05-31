@@ -18,7 +18,7 @@
 
 -type state() :: #{}.
 
--define(PRINT(Format, Args), io:format(Format++"~n", Args)).
+-define(LOG(LEVEL, MSG), logger:log(LEVEL, (MSG)#{tag => "RELUP"})).
 
 %%==============================================================================
 %% API
@@ -64,23 +64,22 @@ terminate(_Reason, _State) ->
 do_upgrade(CurrVsn, TargetVsn, RootDir, Opts) ->
     case emqx_relup_handler:check_and_unpack(CurrVsn, TargetVsn, RootDir, Opts) of
         {error, Reason} ->
-            ?PRINT("[ERROR] check upgrade failed, reason: ~p", [Reason]),
+            ?LOG(error, #{msg => check_upgrade_failed, reason => Reason}),
             {error, Reason};
         {ok, Opts1} ->
-            ?PRINT("[INFO] hot upgrading emqx from current version: ~p to target version: ~p",
-                [CurrVsn, TargetVsn]),
+            ?LOG(notice, #{msg => perform_upgrade, from_vsn => CurrVsn, target_vsn => TargetVsn}),
             try emqx_relup_handler:perform_upgrade(CurrVsn, TargetVsn, RootDir, Opts1) of
                 ok ->
                     case emqx_relup_handler:permanent_upgrade(CurrVsn, TargetVsn, RootDir, Opts1) of
                         ok ->
-                            ?PRINT("[INFO] successfully upgraded emqx to target version: ~p", [TargetVsn]),
+                            ?LOG(notice, #{msg => upgrade_complete, from_vsn => CurrVsn, target_vsn => TargetVsn}),
                             ok;
                         {error, Reason} = Err ->
-                            ?PRINT("[ERROR] permanent release failed, reason: ~p", [Reason]),
+                            ?LOG(error, #{msg => permanent_upgrade_failed, reason => Reason, from_vsn => CurrVsn, target_vsn => TargetVsn}),
                             Err
                     end;
                 {error, Reason} = Err ->
-                    ?PRINT("[ERROR] perform upgrade failed, reason: ~p", [Reason]),
+                    ?LOG(error, #{msg => perform_upgrade_failed, reason => Reason, from_vsn => CurrVsn, target_vsn => TargetVsn}),
                     Err
             catch
                 throw:Reason ->
@@ -93,7 +92,7 @@ do_upgrade(CurrVsn, TargetVsn, RootDir, Opts) ->
     end.
 
 restart_vm(Reason) ->
-    ?PRINT("[ERROR] upgrade failed, restart VM now! Reason: ~p", [Reason]),
+    ?LOG(error, #{msg => restart_vm, reason => Reason}),
     %% Maybe we can rollback the system rather than restart the VM. Here we simply
     %% restart the VM because if we reload the modules we just upgraded,
     %% some processes will probably be killed as they are still runing old code.
