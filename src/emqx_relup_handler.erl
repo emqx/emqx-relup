@@ -120,8 +120,8 @@ deploy_files(TargetVsn, RootDir, UnpackDir, OldRel, NewRel, #{deploy_inplace := 
     ok = copy_libs(TargetVsn, RootDir, UnpackDir, OldRel, NewRel),
     ok = copy_release(TargetVsn, RootDir, UnpackDir),
     {OldRel, NewRel};
-deploy_files(_TargetVsn, RootDir, UnpackDir, _OldRel, _NewRel, Opts) ->
-    DstDir = filename:join([RootDir, "relup"]),
+deploy_files(_TargetVsn, RootDir, UnpackDir, _OldRel, _NewRel, _Opts) ->
+    DstDir = independent_deploy_root(RootDir),
     logger:notice("copy dir from ~s to ~s", [UnpackDir, DstDir]),
     emqx_relup_file_utils:cp_r([UnpackDir], DstDir).
 
@@ -195,8 +195,8 @@ copy_release(TargetVsn, RootDir, UnpackDir) ->
 %%==============================================================================
 permanent_upgrade(_CurrVsn, TargetVsn, RootDir, #{deploy_inplace := true, unpack_dir := UnpackDir}) ->
     overwrite_files(TargetVsn, RootDir, UnpackDir);
-permanent_upgrade(_CurrVsn, _TargetVsn, _RootDir, _) ->
-    ok.
+permanent_upgrade(_CurrVsn, TargetVsn, RootDir, _) ->
+    file:write_file(filename:join([independent_deploy_root(RootDir), "version"]), TargetVsn).
 
 overwrite_files(_TargetVsn, RootDir, UnpackDir) ->
     %% The RELEASES file is not required by OTP to start a release but it is
@@ -462,10 +462,13 @@ get_upgrade_mod(TargetVsn) ->
 %%==============================================================================
 %% Internal functions
 %%==============================================================================
+independent_deploy_root(RootDir) ->
+    filename:join([RootDir, "relup"]).
+
 get_deploy_dir(RootDir, _TargetVsn, #{deploy_inplace := true}) ->
     RootDir;
 get_deploy_dir(RootDir, TargetVsn, _) ->
-    filename:join([RootDir, "relup", TargetVsn]).
+    filename:join([independent_deploy_root(RootDir), TargetVsn]).
 
 read_build_info(RootDir, Vsn) ->
     BuildInfoFile = filename:join([RootDir, "releases", Vsn, "BUILD_INFO"]),
@@ -515,7 +518,7 @@ is_excluded_app(_) -> false.
 
 strip_instrs([{load, Mod, _Bin, FName} | Instrs]) ->
     %% Bin makes no sense and is too large to be printed
-    [{load, Mod, '_', FName} | strip_instrs(Instrs)];
+    [{load, Mod, "...", FName} | strip_instrs(Instrs)];
 strip_instrs([Instr | Instrs]) ->
     [Instr | strip_instrs(Instrs)];
 strip_instrs([]) -> [].
