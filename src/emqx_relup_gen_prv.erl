@@ -11,7 +11,7 @@
     {path_file_name, $u, "path-file-name", {string, "upgrade_path.list"},
         "The filename that describes the upgrade path."}
 ]).
--define(INCLUDE_DIRS, ["bin", "lib", "plugins", "releases"]).
+-define(INCLUDE_DIRS(ERTS_VSN), [lists:concat(["erts-", ERTS_VSN]), "bin", "lib", "releases"]).
 -define(TAR_FILE(VSN), VSN ++ ".tar.gz").
 
 -ifdef(TEST).
@@ -170,7 +170,7 @@ make_relup_tarball(TarFile, ErtsVsn, _OtpVsn, State) ->
     Files = lists:map(fun(Dir) ->
         FullPathDir = filename:join([RelDir, Dir]),
         {Dir, FullPathDir}
-    end, [lists:concat(["erts-", ErtsVsn]) | ?INCLUDE_DIRS]),
+    end, ?INCLUDE_DIRS(ErtsVsn)),
     ok = r3_hex_erl_tar:create(TarFile, Files, [compressed]).
 
 %-------------------------------------------------------------------------------
