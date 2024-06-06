@@ -120,10 +120,10 @@ deploy_files(TargetVsn, RootDir, UnpackDir, OldRel, NewRel, #{deploy_inplace := 
     ok = copy_libs(TargetVsn, RootDir, UnpackDir, OldRel, NewRel),
     ok = copy_release(TargetVsn, RootDir, UnpackDir),
     {OldRel, NewRel};
-deploy_files(TargetVsn, RootDir, UnpackDir, _OldRel, _NewRel, Opts) ->
-    DstDir = get_deploy_dir(RootDir, TargetVsn, Opts),
+deploy_files(_TargetVsn, RootDir, UnpackDir, _OldRel, _NewRel, Opts) ->
+    DstDir = filename:join([RootDir, "relup"]),
     logger:notice("copy dir from ~s to ~s", [UnpackDir, DstDir]),
-    emqx_relup_file_utils:cp_r(UnpackDir, DstDir).
+    emqx_relup_file_utils:cp_r([UnpackDir], DstDir).
 
 unpack_release(TargetVsn) ->
     TarFile = filename:join([code:priv_dir(emqx_relup), concat([TargetVsn, ".tar.gz"])]),
@@ -165,7 +165,7 @@ copy_lib(NLib, RootDir, UnpackDir) ->
     DstDir = filename:join([RootDir, "lib", LibDirName]),
     SrcDir = filename:join([UnpackDir, "lib", LibDirName]),
     logger:notice("copy lib from ~s to ~s", [SrcDir, DstDir]),
-    emqx_relup_file_utils:cp_r(SrcDir, DstDir).
+    emqx_relup_file_utils:cp_r([SrcDir], DstDir).
 
 load_relup_file(CurrVsn, TargetVsn, Dir) ->
     RelupFile = filename:join([Dir, "releases", TargetVsn, concat([TargetVsn, ".relup"])]),
@@ -188,7 +188,7 @@ load_relup_file(CurrVsn, TargetVsn, Dir) ->
 copy_release(TargetVsn, RootDir, UnpackDir) ->
     SrcDir = filename:join([UnpackDir, "releases", TargetVsn]),
     DstDir = filename:join([RootDir, "releases", TargetVsn]),
-    emqx_relup_file_utils:cp_r(SrcDir, DstDir).
+    emqx_relup_file_utils:cp_r([SrcDir], DstDir).
 
 %%==============================================================================
 %% Permanent Release
