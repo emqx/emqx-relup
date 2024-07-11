@@ -6,7 +6,7 @@
         ]).
 
 -import(lists, [concat/1]).
--import(emqx_relup_utils, [str/1]).
+-import(emqx_relup_utils, [str/1, exception_to_error/3, make_error/2]).
 
 %%==============================================================================
 %% API
@@ -26,7 +26,7 @@ check_and_unpack(CurrVsn, TargetVsn, RootDir, Opts) ->
         throw:Reason ->
             {error, Reason};
         Err:Reason:ST ->
-            {error, {Err, Reason, ST}}
+            exception_to_error(Err, Reason, ST)
     end.
 
 perform_upgrade(CurrVsn, TargetVsn, RootDir, Opts) ->
@@ -44,14 +44,14 @@ perform_upgrade(CurrVsn, TargetVsn, RootDir, Opts) ->
         throw:Reason ->
             {error, Reason};
         Err:Reason:ST ->
-            {error, {Err, Reason, ST}}
+            exception_to_error(Err, Reason, ST)
     end.
 
 %%==============================================================================
 %% Check Upgrade
 %%==============================================================================
 assert_not_same_vsn(TargetVsn, TargetVsn) ->
-    throw({already_upgraded_to_target_vsn, TargetVsn});
+    throw(make_error(already_upgraded_to_target_vsn,#{vsn => TargetVsn}));
 assert_not_same_vsn(_CurrVsn, _TargetVsn) ->
     ok.
 
@@ -67,16 +67,17 @@ do_check_write_permission(RootDir, SubDir) ->
         ok ->
             case file:write_file(File, "t") of
                 {error, eacces} ->
-                    throw({no_write_permission, #{dir => SubDir,
-                        msg => "Please set emqx as the owner of the dir by running:"
-                            " 'sudo chown -R emqx:emqx " ++ SubDir ++ "'"}});
+                    throw(make_error(no_write_permission,
+                          #{dir => SubDir,
+                            msg => "Please set emqx as the owner of the dir by running:"
+                                   " 'sudo chown -R emqx:emqx " ++ SubDir ++ "'"}));
                 {error, Reason} ->
-                    throw({cannot_write_file, #{dir => SubDir, reason => Reason}});
+                    throw(make_error(cannot_write_file, #{dir => SubDir, reason => Reason}));
                 ok ->
                     ok = file:delete(File)
             end;
         {error, Reason} ->
-            throw({cannot_create_dir, #{dir => SubDir, reason => Reason}})
+            throw(make_error(cannot_create_dir, #{dir => SubDir, reason => Reason}))
     end.
 
 check_otp_comaptibility(CurrVsn, RootDir, UnpackDir, TargetVsn) ->
@@ -95,7 +96,7 @@ check_otp_comaptibility(CurrVsn, RootDir, UnpackDir, TargetVsn) ->
 assert_same_major_vsn(CurrOTPVsn, NewOTPVsn) ->
     case emqx_relup_utils:major_vsn(CurrOTPVsn) =:= emqx_relup_utils:major_vsn(NewOTPVsn) of
         true -> ok;
-        false -> throw({otp_major_vsn_mismatch, #{curr => CurrOTPVsn, new => NewOTPVsn}})
+        false -> throw(make_error(otp_major_vsn_mismatch, #{curr => CurrOTPVsn, new => NewOTPVsn}))
     end.
 
 assert_same_otp_fork(CurrOTPVsn, NewOTPVsn) ->
@@ -103,14 +104,14 @@ assert_same_otp_fork(CurrOTPVsn, NewOTPVsn) ->
     NewFork = emqx_relup_utils:fork_type(NewOTPVsn),
     case CurrFork =:= NewFork of
         true -> ok;
-        false -> throw({otp_fork_type_mismatch, #{curr => CurrOTPVsn, new => NewOTPVsn}})
+        false -> throw(make_error(otp_fork_type_mismatch, #{curr => CurrOTPVsn, new => NewOTPVsn}))
     end.
 
 assert_same_os_arch(CurrBuildInfo, NewBuildInfo) ->
     case maps:get("os", CurrBuildInfo) =:= maps:get("os", NewBuildInfo) andalso
          emqx_relup_utils:is_arch_compatible(maps:get("arch", CurrBuildInfo), maps:get("arch", NewBuildInfo)) of
         true -> ok;
-        false -> throw({os_arch_mismatch, #{curr => CurrBuildInfo, new => NewBuildInfo}})
+        false -> throw(make_error(os_arch_mismatch, #{curr => CurrBuildInfo, new => NewBuildInfo}))
     end.
 
 %%==============================================================================
@@ -129,7 +130,7 @@ unpack_release(TargetVsn) ->
     TarFile = filename:join([code:priv_dir(emqx_relup), concat([TargetVsn, ".tar.gz"])]),
     case filelib:is_regular(TarFile) of
         false ->
-            throw({relup_tar_file_not_found, TarFile});
+            throw(make_error(relup_tar_file_not_found, #{file => TarFile}));
         true ->
             TmpDir = emqx_relup_file_utils:tmp_dir(),
             UnpackDir = filename:join([TmpDir, TargetVsn]),
@@ -175,14 +176,14 @@ load_relup_file(CurrVsn, TargetVsn, Dir) ->
                         FromVsn =:= CurrVsn andalso TargetVsn0 =:= TargetVsn
                     end, RelupL) of
                 false ->
-                    throw({no_relup_entry, #{file => RelupFile, from_vsn => CurrVsn, target_vsn => TargetVsn}});
+                    throw(make_error(no_relup_entry, #{file => RelupFile, from_vsn => CurrVsn, target_vsn => TargetVsn}));
                 {value, Relup} ->
                     Relup
             end;
         {ok, RelupL} ->
-            throw({invalid_relup_file, #{file => RelupFile, content => RelupL}});
+            throw(make_error(invalid_relup_file, #{file => RelupFile, content => RelupL}));
         {error, Reason} ->
-            throw({failed_to_read_relup_file, #{file => RelupFile, reason => Reason}})
+            throw(make_error(failed_to_read_relup_file, #{file => RelupFile, reason => Reason}))
     end.
 
 copy_release(TargetVsn, RootDir, UnpackDir) ->
@@ -218,9 +219,9 @@ overwrite_files(_TargetVsn, RootDir, UnpackDir) ->
                 ExraRel = filename:join([RootDir, "releases", "emqx.rel"]),
                 emqx_relup_file_utils:ensure_file_deleted(ExraRel)
             catch
-                throw:{copy_failed, #{history := History} = Details} ->
+                throw:#{error := copy_failed, history := History} = Details ->
                     ok = recover_overwritten_files(History),
-                    {error, {copy_failed, maps:remove(history, Details)}}
+                    {error, make_error(copy_failed, #{details => maps:remove(history, Details)})}
             end;
         {error, _} = Err ->
             Err
@@ -246,7 +247,7 @@ copy_file(SrcFile, DstFile, Copied) ->
     case file:copy(SrcFile, DstFile) of
         {ok, _} -> ok;
         {error, Reason} ->
-            throw({copy_failed, #{reason => Reason, src => SrcFile, dst => DstFile, history => Copied}})
+            throw(make_error(copy_failed, #{reason => Reason, src => SrcFile, dst => DstFile, history => Copied}))
     end.
 
 %%==============================================================================
@@ -258,7 +259,7 @@ eval_relup(CurrVsn, TargetVsn, Relup, LibModInfo) ->
     try eval_post_upgrade_actions(TargetVsn, CurrVsn, Relup)
     catch
         Err:Reason:ST ->
-            {error, {eval_post_upgrade_actions, {Err, Reason, ST}}}
+            exception_to_error(Err, Reason, ST)
     end.
 
 eval_code_changes(Relup, LibModInfo, CurrVsn) ->
@@ -309,9 +310,9 @@ load_object_code(Mod, #{mod_app_mapping := ModAppMapping}) ->
                 {ok, Bin, FName2} ->
                     {Bin, FName2};
                 error ->
-                    throw({no_such_file, File})
+                    throw(make_error(no_such_file, #{file => File}))
             end;
-        undefined -> throw({module_not_found, Mod})
+        undefined -> throw(make_error(module_not_found, #{module => Mod}))
     end.
 
 assert_valid_instrs({load, _, _, _} = Instr) ->
@@ -330,7 +331,7 @@ assert_valid_instrs({remove_app, AppName} = Instr) when is_atom(AppName) ->
 assert_valid_instrs({start_app, AppName} = Instr) when is_atom(AppName) ->
     Instr;
 assert_valid_instrs(Instr) ->
-    throw({invalid_instr, Instr}).
+    throw(make_error(invalid_instr, #{instruction => Instr})).
 
 eval([], _Opts) ->
     ok;
@@ -371,7 +372,7 @@ eval([{stop_app, AppName} | Instrs], Opts) ->
         ok -> ok;
         {error, {not_started, _}} -> ok;
         {error, Reason} ->
-            throw({failed_to_stop_app, #{app => AppName, reason => Reason}})
+            throw(make_error(failed_to_stop_app, #{app => AppName, reason => Reason}))
     end,
     eval(Instrs, Opts);
 eval([{remove_app, AppName} | Instrs], Opts) ->
@@ -397,9 +398,9 @@ change_code(Pid, Mod, FromVsn, Extra) ->
     case sys:change_code(Pid, Mod, FromVsn, Extra) of
         ok -> ok;
         {error, Reason} ->
-            throw({code_change_failed, #{
+            throw(make_error(code_change_failed, #{
                 pid => Pid, mod => Mod, from_vsn => FromVsn,
-                extra => Extra, reason => Reason}})
+                extra => Extra, reason => Reason}))
     end.
 
 %%==============================================================================
@@ -418,13 +419,13 @@ eval_post_upgrade_actions(TargetVsn, CurrVsn, Relup) ->
             catch
                 %% Here we try our best to revert the applied functions, so that
                 %% we have a clean system before we try the upgrade again.
-                throw:{apply_func, #{rollbacks := Rollbacks} = Details} ->
+                throw:#{error := apply_func, rollbacks := Rollbacks} = Details ->
                     lists:foreach(fun(RevertFunc) ->
                         apply_func(Mod, RevertFunc, [CurrVsn], log)
                     end, Rollbacks),
-                    {error, {eval_post_upgrade_actions, maps:remove(rollbacks, Details)}};
+                    {error, make_error(eval_post_upgrade_actions, #{details => maps:remove(rollbacks, Details)})};
                 Err:Reason:ST ->
-                    {error, {eval_post_upgrade_actions, {Err, Reason, ST}}}
+                    exception_to_error(Err, Reason, ST)
             end;
         {error, Reason} ->
             {error, Reason}
@@ -439,9 +440,10 @@ apply_func(Mod, Func, Args, Rollbacks) ->
                     logger:error("Failed to apply function ~p:~p with args ~p, st: ~p",
                         [Mod, Func, Args, {Err, Reason, ST}]);
                 _ ->
-                    throw({apply_func, #{func => Func, args => Args,
+                    throw(make_error(apply_func, #{
+                            func => Func, args => Args,
                             reason => {Err, Reason, ST},
-                            rollbacks => Rollbacks}})
+                            rollbacks => Rollbacks}))
             end
     end.
 
@@ -456,7 +458,7 @@ get_upgrade_mod(TargetVsn) ->
         {false, {file, _}} ->
             {ok, Mod};
         {false, false} ->
-            {error, {post_upgrade_module_not_loaded, #{mod => Mod}}}
+            {error, make_error(post_upgrade_module_not_loaded, #{mod => Mod})}
     end.
 
 %%==============================================================================
@@ -494,7 +496,7 @@ get_all_lines(Device) ->
     case file:read_line(Device) of
         eof -> [];
         {ok, Line} -> [Line | get_all_lines(Device)];
-        {error, Reason} -> throw({failed_to_read_file, Reason})
+        {error, Reason} -> throw(make_error(failed_to_read_file, #{reason => Reason}))
     end.
 
 consult_rel_file(RootDir, TargetVsn) ->
@@ -503,7 +505,7 @@ consult_rel_file(RootDir, TargetVsn) ->
         {ok, [Release]} ->
             {ok, Release};
         {error, Reason} ->
-            throw({failed_to_read_rel_file, #{file => RelFile, reason => Reason}})
+            throw(make_error(failed_to_read_rel_file, #{file => RelFile, reason => Reason}))
     end.
 
 write_troubleshoot_file(Name, Term) ->

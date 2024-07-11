@@ -65,7 +65,7 @@ do_upgrade(CurrVsn, TargetVsn, RootDir, Opts) ->
     case emqx_relup_handler:check_and_unpack(CurrVsn, TargetVsn, RootDir, Opts) of
         {error, Reason} ->
             ?LOG(error, #{msg => check_upgrade_failed, reason => Reason}),
-            {error, Reason};
+            {error, Reason#{stage => check_and_unpack}};
         {ok, Opts1} ->
             ?LOG(notice, #{msg => perform_upgrade, from_vsn => CurrVsn, target_vsn => TargetVsn}),
             try emqx_relup_handler:perform_upgrade(CurrVsn, TargetVsn, RootDir, Opts1) of
@@ -74,13 +74,13 @@ do_upgrade(CurrVsn, TargetVsn, RootDir, Opts) ->
                         ok ->
                             ?LOG(notice, #{msg => upgrade_complete, from_vsn => CurrVsn, target_vsn => TargetVsn}),
                             ok;
-                        {error, Reason} = Err ->
+                        {error, Reason} ->
                             ?LOG(error, #{msg => permanent_upgrade_failed, reason => Reason, from_vsn => CurrVsn, target_vsn => TargetVsn}),
-                            Err
+                            {error, Reason#{stage => permanent_upgrade}}
                     end;
-                {error, Reason} = Err ->
+                {error, Reason} ->
                     ?LOG(error, #{msg => perform_upgrade_failed, reason => Reason, from_vsn => CurrVsn, target_vsn => TargetVsn}),
-                    Err
+                    {error, Reason#{stage => perform_upgrade}}
             catch
                 throw:Reason ->
                     restart_vm(Reason);

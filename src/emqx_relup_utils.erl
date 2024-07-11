@@ -1,5 +1,9 @@
 -module(emqx_relup_utils).
 
+-export([ exception_to_error/3
+        , make_error/2
+        ]).
+
 -export([ assert_propl_get/3
         , assert_propl_get/4
         , ts_filename/1
@@ -9,13 +13,19 @@
         , is_arch_compatible/2
         ]).
 
+exception_to_error(Err, Reason, ST) ->
+    {error, make_error(exception, #{reason => {Err, Reason}, stacktrace => ST})}.
+
+make_error(Type, Details) when is_map(Details) ->
+    Details#{err_type => Type}.
+
 assert_propl_get(Key, Proplist, ErrMsg) ->
     assert_propl_get(Key, Proplist, ErrMsg, #{}).
 
 assert_propl_get(Key, Proplist, ErrMsg, Meta) ->
     case proplists:get_value(Key, Proplist) of
         undefined ->
-            throw({ErrMsg, maps:merge(#{key => Key, proplist => Proplist}, Meta)});
+            throw(make_error(ErrMsg, maps:merge(#{key => Key, proplist => Proplist}, Meta)));
         Value -> Value
     end.
 
@@ -31,7 +41,7 @@ str(S) when is_list(S) -> S.
 major_vsn(Vsn) ->
     case string:split(Vsn, ".") of
         [Maj | _] -> str(Maj);
-        _ -> throw({invalid_version, str(Vsn)})
+        _ -> throw(make_error(invalid_version, str(Vsn)))
     end.
 
 fork_type(Vsn) ->

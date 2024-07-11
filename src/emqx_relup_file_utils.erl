@@ -13,6 +13,8 @@
         , chr/2
         ]).
 
+-import(emqx_relup_utils, [make_error/2]).
+
 -define(FMT(Str, Args), lists:flatten(io_lib:format(Str, Args))).
 
 ensure_dir(Path) ->
@@ -51,7 +53,7 @@ cp_r(Sources, Dest) ->
 
 tmp_dir() ->
     case tmp_dir_1() of
-        false -> throw(cannot_get_writable_tmp_dir);
+        false -> throw(make_error(cannot_get_writable_tmp_dir, #{}));
         Dir -> Dir
     end.
 
@@ -60,7 +62,7 @@ ensure_dir_deleted(Dir) ->
         ok -> ok;
         {error, enoent} -> ok;
         {error, Reason} ->
-            throw({failed_to_delete_dir, #{dir => Dir, reason => Reason}})
+            throw(make_error(failed_to_delete_dir, #{dir => Dir, reason => Reason}))
     end.
 
 ensure_file_deleted(FileName) ->
@@ -68,7 +70,7 @@ ensure_file_deleted(FileName) ->
         ok -> ok;
         {error, enoent} -> ok;
         {error, Reason} ->
-            throw({failed_to_delete_file, #{file => FileName, reason => Reason}})
+            throw(make_error(failed_to_delete_file, #{file => FileName, reason => Reason}))
     end.
 
 %% @doc gets the real path of a directory. This is mostly useful for
@@ -161,8 +163,8 @@ cp_r_win32({true, SourceDir}, {false, DestDir}) ->
     case filelib:is_regular(DestDir) of
         true ->
             %% From directory to file? This shouldn't happen
-            {error, lists:flatten(?FMT("Cannot copy dir (~p) to file (~p)\n",
-                        [SourceDir, DestDir]))};
+            {error, make_error(cp_r_win32, #{reason => lists:flatten(?FMT("Cannot copy dir (~p) to file (~p)\n",
+                        [SourceDir, DestDir]))})};
         false ->
             %% Specifying a target directory that doesn't currently exist.
             %% So let's attempt to create this directory
@@ -170,8 +172,8 @@ cp_r_win32({true, SourceDir}, {false, DestDir}) ->
                 ok ->
                     ok = xcopy_win32(SourceDir, DestDir);
                 {error, Reason} ->
-                    {error, lists:flatten(?FMT("Unable to create dir ~p: ~p\n",
-                                [DestDir, Reason]))}
+                    {error, make_error(cp_r_win32, #{reason => lists:flatten(?FMT("Unable to create dir ~p: ~p\n",
+                                [DestDir, Reason]))})}
             end
     end;
 cp_r_win32(Source,Dest) ->
@@ -205,9 +207,9 @@ xcopy_win32(Source,Dest)->
     case win32_ok(Res) of
         true -> ok;
         false ->
-            {error, lists:flatten(
-                ?FMT("Failed to copy ~ts to ~ts~n",
-                            [Source, Dest]))}
+            {error, make_error(cp_r_win32, #{
+                reason => lists:flatten(
+                    ?FMT("Failed to copy ~ts to ~ts~n", [Source, Dest]))})}
     end.
 
 win32_ok({ok, _}) -> true;
@@ -267,7 +269,7 @@ expand_sh_flag({abort_on_error, Message}) ->
 expand_sh_flag(return_on_error) ->
     {error_handler,
      fun(_Command, Err) ->
-             {error, Err}
+             {error, make_error(sh, #{reason => Err})}
      end};
 expand_sh_flag(use_stdout) ->
     {output_handler,
@@ -289,7 +291,7 @@ expand_sh_flag({env, _EnvArg} = Env) ->
 log_msg_and_abort(Message) ->
     fun(_Command, {_Rc, _Output}) ->
         logger:error(#{msg => sh_failed, details => Message}),
-        throw(sh_aborted)
+        throw(make_error(sh_aborted, #{}))
     end.
 
 port_line_to_list(Line) ->
@@ -312,7 +314,7 @@ sh_loop(Port, Fun, Acc) ->
                 {Port, {exit_status, 0}} ->
                     {ok, Data};
                 {Port, {exit_status, Rc}} ->
-                    {error, {Rc, Data}}
+                    {error, make_error(sh, #{details => {Rc, Data}})}
             end
     end.
 

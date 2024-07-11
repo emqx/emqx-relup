@@ -1,6 +1,7 @@
 -module(emqx_relup_gen_prv).
 
 -export([init/1, do/1, format_error/1]).
+-import(emqx_relup_utils, [make_error/2]).
 
 -define(PROVIDER, relup_gen).
 -define(DEPS, [{default, release}]).
@@ -76,17 +77,17 @@ get_upgrade_path(PathFile, TargetVsn) ->
             case lists:search(Search, PathDescList1) of
                 false ->
                     Reason = #{target_vsn => TargetVsn, file => PathFile},
-                    throw({target_vsn_not_found_in_path_file, Reason});
+                    throw(make_error(target_vsn_not_found_in_path_file, Reason));
                 {value, PathDesc} ->
                     PathDesc
             end;
         {error, Reason} ->
-            throw({get_upgrade_path_error, #{error => Reason, file => PathFile}})
+            throw(make_error(get_upgrade_path_error, #{error => Reason, file => PathFile}))
     end.
 
 parse_path_desc(FullPathStr) ->
     case parse_upgrade_path_str(FullPathStr) of
-        [_] -> throw({invalid_upgrade_path, #{path_str => FullPathStr}});
+        [_] -> throw(make_error(invalid_upgrade_path, #{path_str => FullPathStr}));
         [TargetVsn | UpgradePath] ->
             #{target_vsn => TargetVsn, upgrade_path => UpgradePath}
     end.
@@ -97,7 +98,7 @@ load_partial_relup_files(RelupDir) ->
     %% read all of the *.relup files in the relup directory
     case filelib:wildcard(filename:join([RelupDir, "*.relup"])) of
         [] ->
-            throw({no_relup_files_found, #{dir => RelupDir}});
+            throw(make_error(no_relup_files_found, #{dir => RelupDir}));
         Files ->
             lists:foldl(fun(File, Acc) ->
                 case file:script(File) of
@@ -105,8 +106,8 @@ load_partial_relup_files(RelupDir) ->
                         ok = validate_relup_file(Relup),
                         Acc#{{TargetVsn, FromVsn} => Relup};
                     {error, Reason} ->
-                        throw({load_partial_relup_files_error,
-                                #{error => Reason, file => File}})
+                        throw(make_error(load_partial_relup_files_error,
+                                #{error => Reason, file => File}))
                 end
             end, #{}, Files)
     end.
@@ -117,7 +118,7 @@ save_relup_file(Relup, TargetVsn, State) ->
     case file:write_file(RelupFile, io_lib:format("~p.", [Relup])) of
         ok -> ok;
         {error, Reason} ->
-            throw({save_relup_file_error, #{error => Reason, file => RelupFile}})
+            throw(make_error(save_relup_file_error, #{error => Reason, file => RelupFile}))
     end.
 
 %% Assume that we have a UpgradePath = 5 <- 3 <- 2 <- 1, then we need to have
@@ -127,7 +128,7 @@ save_relup_file(Relup, TargetVsn, State) ->
 gen_compelte_relup(Relups, TargetVsn, UpgradePath0) ->
     [FirstFromVsn | UpgradePath] = UpgradePath0,
     TargetRelups0 = case search_relup(TargetVsn, FirstFromVsn, Relups) of
-        error -> throw({relup_not_found, #{from => FirstFromVsn, target => TargetVsn}});
+        error -> throw(make_error(relup_not_found, #{from => FirstFromVsn, target => TargetVsn}));
         {ok, Relup} -> [Relup]
     end,
     {_, TargetRelups, _} = lists:foldl(fun(FromVsn, {LastResolvedFromVsn, TargetRelups1, RelupsAcc}) ->
@@ -136,7 +137,7 @@ gen_compelte_relup(Relups, TargetVsn, UpgradePath0) ->
                     {ok, Part1} = search_relup(TargetVsn, LastResolvedFromVsn, RelupsAcc),
                     case search_relup(LastResolvedFromVsn, FromVsn, RelupsAcc) of
                         error ->
-                            throw({relup_not_found, #{from => FromVsn, target => LastResolvedFromVsn}});
+                            throw(make_error(relup_not_found, #{from => FromVsn, target => LastResolvedFromVsn}));
                         {ok, Part2} ->
                             Relup0 = concat_relup(Part1, Part2),
                             {FromVsn, [Relup0 | TargetRelups1],
@@ -163,7 +164,7 @@ concat_relup(#{target_version := A, from_version := B} = Relup1,
     };
 concat_relup(#{target_version := A, from_version := B},
              #{target_version := C, from_version := D}) ->
-    throw({cannot_concat_relup, #{relup1 => {A, B}, relup2 => {C, D}}}).
+    throw(make_error(cannot_concat_relup, #{relup1 => {A, B}, relup2 => {C, D}})).
 
 make_relup_tarball(TarFile, ErtsVsn, _OtpVsn, State) ->
     RelDir = get_rel_dir(State),
@@ -187,14 +188,14 @@ get_erts_vsn() ->
     {ok, Content} = file:read_file(VsnFile),
     case string:split(Content, " ") of
         [ErtsVsn, _OtpVsn] -> binary_to_list(string:trim(ErtsVsn));
-        _ -> throw({parse_start_erl_data_failed, VsnFile})
+        _ -> throw(make_error(parse_start_erl_data_failed, #{file => VsnFile}))
     end.
 
 get_release_vsn(State) ->
     RelxOpts = rebar_state:get(State, relx, []),
     case lists:keyfind(release, 1, rebar_state:get(State, relx, [])) of
         false ->
-            throw({relx_opts_not_found, #{relx_opts => RelxOpts}});
+            throw(make_error(relx_opts_not_found, #{relx_opts => RelxOpts}));
         {release, {_Name, RelxVsn}, _} ->
             RelxVsn
     end.
@@ -207,7 +208,7 @@ getopt_relup_dir(RawArgs) ->
 
 getopt_upgrade_path_file(RelupDir, RawArgs) ->
     case proplists:get_value(path_file_name, RawArgs) of
-        undefined -> throw({missing_cmd_opts, path_file_name});
+        undefined -> throw(make_error(missing_cmd_opts, #{opt => path_file_name}));
         PathFile -> filename:join([RelupDir, PathFile])
     end.
 

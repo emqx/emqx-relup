@@ -10,6 +10,7 @@
         ]).
 
 -import(lists, [concat/1]).
+-import(emqx_relup_utils, [make_error/2]).
 
 make_libs_info(Rel, Dir) ->
     AppDescList = make_app_desc_list(rel_libs(Rel), Dir),
@@ -20,7 +21,7 @@ make_libs_info(Rel, Dir) ->
 
 get_app_mods(AppName, #{app_desc_list := AppDescL}) ->
     case lists:keyfind(AppName, 2, AppDescL) of
-        false -> throw({app_not_found, AppName});
+        false -> throw(make_error(app_not_found, #{app_name => AppName}));
         {application, AppName, Attrs} ->
             emqx_relup_utils:assert_propl_get(modules, Attrs,
                 no_modules_in_app_desc, #{func => get_app_mods, app => AppName})
@@ -49,7 +50,8 @@ make_app_desc_list(Libs, Dir) ->
         case file:consult(AppDescFile) of
             {ok, [AppDesc]} -> AppDesc;
             {error, Reason} ->
-                throw({failed_to_read_app_desc_file, #{file => AppDescFile, reason => Reason}})
+                throw(make_error(failed_to_read_app_desc_file,
+                    #{file => AppDescFile, reason => Reason}))
         end
     end, Libs).
 
