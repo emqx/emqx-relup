@@ -51,7 +51,7 @@ perform_upgrade(CurrVsn, TargetVsn, RootDir, Opts) ->
 %% Check Upgrade
 %%==============================================================================
 assert_not_same_vsn(TargetVsn, TargetVsn) ->
-    throw(make_error(already_upgraded_to_target_vsn,#{vsn => TargetVsn}));
+    throw(make_error(already_upgraded_to_target_vsn, #{vsn => TargetVsn}));
 assert_not_same_vsn(_CurrVsn, _TargetVsn) ->
     ok.
 
