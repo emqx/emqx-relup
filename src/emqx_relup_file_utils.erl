@@ -77,7 +77,7 @@ ensure_file_deleted(FileName) ->
 %% resolving symlinks. Be aware that this temporarily changes the
 %% current working directory to figure out what the actual path
 %% is. That means that it can be quite slow.
--spec real_dir_path(file:name()) -> file:name().
+-spec real_dir_path(file:name() | binary()) -> file:name().
 real_dir_path(Path) ->
     {ok, CurCwd} = file:get_cwd(),
     ok = file:set_cwd(Path),
@@ -163,8 +163,8 @@ cp_r_win32({true, SourceDir}, {false, DestDir}) ->
     case filelib:is_regular(DestDir) of
         true ->
             %% From directory to file? This shouldn't happen
-            {error, make_error(cp_r_win32, #{reason => lists:flatten(?FMT("Cannot copy dir (~p) to file (~p)\n",
-                        [SourceDir, DestDir]))})};
+            {error, lists:flatten(?FMT("Cannot copy dir (~p) to file (~p)\n",
+                        [SourceDir, DestDir]))};
         false ->
             %% Specifying a target directory that doesn't currently exist.
             %% So let's attempt to create this directory
@@ -172,8 +172,8 @@ cp_r_win32({true, SourceDir}, {false, DestDir}) ->
                 ok ->
                     ok = xcopy_win32(SourceDir, DestDir);
                 {error, Reason} ->
-                    {error, make_error(cp_r_win32, #{reason => lists:flatten(?FMT("Unable to create dir ~p: ~p\n",
-                                [DestDir, Reason]))})}
+                    {error, lists:flatten(?FMT("Unable to create dir ~p: ~p\n",
+                                [DestDir, Reason]))}
             end
     end;
 cp_r_win32(Source,Dest) ->
@@ -207,9 +207,9 @@ xcopy_win32(Source,Dest)->
     case win32_ok(Res) of
         true -> ok;
         false ->
-            {error, make_error(cp_r_win32, #{
-                reason => lists:flatten(
-                    ?FMT("Failed to copy ~ts to ~ts~n", [Source, Dest]))})}
+            {error, lists:flatten(
+                ?FMT("Failed to copy ~ts to ~ts~n",
+                            [Source, Dest]))}
     end.
 
 win32_ok({ok, _}) -> true;
@@ -227,11 +227,10 @@ filter_cp_dirs(Sources, Dest) ->
     RealSrcDirs = resolve_real_dirs(Sources),
     RealDstDir = real_dir_path(Dest),
     lists:filter(fun(Src) ->
-                         Dir = bin(filename:dirname(Src)),
-                         RealDir = maps:get(Dir, RealSrcDirs),
-                         RealDir =/= RealDstDir andalso
-                            bin(filename:basename(Src)) =/= <<".git">> % do not copy .git
-                 end, Sources).
+            Dir = bin(filename:dirname(Src)),
+            RealDir = maps:get(Dir, RealSrcDirs),
+            RealDir =/= RealDstDir
+        end, Sources).
 
 resolve_real_dirs(Srcs) ->
     resolve_real_dirs(Srcs, #{}).
@@ -269,7 +268,7 @@ expand_sh_flag({abort_on_error, Message}) ->
 expand_sh_flag(return_on_error) ->
     {error_handler,
      fun(_Command, Err) ->
-             {error, make_error(sh, #{reason => Err})}
+             {error, Err}
      end};
 expand_sh_flag(use_stdout) ->
     {output_handler,
@@ -291,7 +290,7 @@ expand_sh_flag({env, _EnvArg} = Env) ->
 log_msg_and_abort(Message) ->
     fun(_Command, {_Rc, _Output}) ->
         logger:error(#{msg => sh_failed, details => Message}),
-        throw(make_error(sh_aborted, #{}))
+        throw(sh_aborted)
     end.
 
 port_line_to_list(Line) ->
@@ -314,7 +313,7 @@ sh_loop(Port, Fun, Acc) ->
                 {Port, {exit_status, 0}} ->
                     {ok, Data};
                 {Port, {exit_status, Rc}} ->
-                    {error, make_error(sh, #{details => {Rc, Data}})}
+                    {error, {Rc, Data}}
             end
     end.
 

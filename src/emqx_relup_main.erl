@@ -28,13 +28,13 @@
 -type upgrade_error() :: #{err_type => atom(), details => binary()}.
 
 -record(emqx_relup_log, {
-    started_at :: integer(),
-    finished_at :: integer(),
-    from_vsn :: binary(),
-    target_vsn :: binary(),
+    started_at :: integer() | undefined,
+    finished_at :: integer() | undefined,
+    from_vsn :: binary() | undefined,
+    target_vsn :: binary() | undefined,
     upgrade_opts = #{} :: map(),
-    status :: upgrade_status(),
-    result :: success | upgrade_error(),
+    status :: upgrade_status() | undefined,
+    result :: success | upgrade_error() | undefined,
     extra = #{} :: map()
 }).
 
@@ -162,12 +162,15 @@ format_upgrade_log(#emqx_relup_log{
         target_vsn => TargetVsn,
         upgrade_opts => Opts,
         status => Status,
-        result => Result
+        result => maybe_result(Result)
     }.
 
 maybe_to_rfc3339(undefined) -> <<"-">>;
 maybe_to_rfc3339(Int) ->
-    list_to_binary(calendar:system_time_to_rfc3339(Int, [{unit, millisecond}])).
+    bin(calendar:system_time_to_rfc3339(Int, [{unit, millisecond}])).
+
+maybe_result(undefined) -> <<"-">>;
+maybe_result(Result) -> Result.
 
 log_upgrade_started(CurrVsn, TargetVsn, Opts) ->
     Now = erlang:system_time(millisecond),
@@ -201,11 +204,11 @@ format_result(ok) ->
 format_result({error, Details}) ->
     #{
         err_type => maps:get(err_type, Details, unknown),
-        details => io_lib:format("~0p", [maps:remove(err_type, Details)])
+        details => bin(io_lib:format("~0p", [maps:remove(err_type, Details)]))
     }.
 
 bin(S) when is_list(S) ->
-    list_to_binary(S);
+    iolist_to_binary(S);
 bin(A) when is_atom(A) ->
     atom_to_binary(A, utf8);
 bin(B) when is_binary(B) ->

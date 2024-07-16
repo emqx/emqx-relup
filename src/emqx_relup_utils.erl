@@ -40,8 +40,8 @@ str(S) when is_list(S) -> S.
 
 major_vsn(Vsn) ->
     case string:split(Vsn, ".") of
-        [Maj | _] -> str(Maj);
-        _ -> throw(make_error(invalid_version, str(Vsn)))
+        [Maj, _ | _] -> str(Maj);
+        _ -> throw(make_error(invalid_version, #{vsn => str(Vsn)}))
     end.
 
 fork_type(Vsn) ->
