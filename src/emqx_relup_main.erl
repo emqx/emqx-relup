@@ -94,8 +94,8 @@ handle_call({get_package_info, TargetVsn}, _From, State) ->
         case emqx_relup_handler:get_package_info(TargetVsn) of
             {error, Reason} ->
                 {error, Reason};
-            {ok, #{base_vsns := BaseVsns, change_log := ChangeLog}} ->
-                {ok, #{base_vsns => BaseVsns, change_log => ChangeLog}}
+            {ok, #{base_vsns := BaseVsns, change_logs := ChangeLogs}} ->
+                {ok, #{base_vsns => BaseVsns, change_logs => ChangeLogs}}
         end,
     {reply, Reply, State};
 handle_call(_Request, _From, State) ->

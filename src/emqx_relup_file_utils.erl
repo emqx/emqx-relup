@@ -122,7 +122,7 @@ chr([], _C, _I) -> 0.
 sh(Command0, Options0) ->
     DefaultOptions = [
         {use_stdout, false},
-        {abort_on_error, ?FMT("sh: run command failed: ~ts", [escape_chars(Command0)])}
+        {abort_on_error, ?FMT("sh: run command failed: ~ts", [Command0])}
     ],
     Options = [expand_sh_flag(V) || V <- proplists:compact(Options0 ++ DefaultOptions)],
     ErrorHandler = proplists:get_value(error_handler, Options),

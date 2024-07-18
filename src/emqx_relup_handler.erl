@@ -16,9 +16,9 @@ get_package_info(TargetVsn) ->
     try
         {ok, UnpackDir} = unpack_release(TargetVsn),
         RelupL = load_relup_files(TargetVsn, UnpackDir),
-        ChangeLog = load_change_log_file(TargetVsn, UnpackDir),
+        ChangeLogs = read_change_log_files(TargetVsn, UnpackDir),
         {ok, #{unpack_dir => UnpackDir, full_relup => RelupL,
-               base_vsns => get_base_vsns(RelupL), change_log => ChangeLog}}
+               base_vsns => get_base_vsns(RelupL), change_logs => ChangeLogs}}
     catch
         throw:Reason ->
             {error, Reason};
@@ -207,13 +207,16 @@ load_relup_files(TargetVsn, Dir) ->
             throw(make_error(failed_to_read_relup_file, #{file => RelupFile, reason => Reason}))
     end.
 
-load_change_log_file(TargetVsn, Dir) ->
-    ChangeLogFile = filename:join([Dir, "releases", TargetVsn, "change_log"]),
-    case file:read_file(ChangeLogFile) of
-        {ok, Bin} ->
-            {ok, Bin};
+read_change_log_files(TargetVsn, Dir) ->
+    FileNamesWc = filename:join([Dir, "releases", TargetVsn, "change_log*.md"]),
+    ChangeLogFiles = filelib:wildcard(FileNamesWc),
+    [read_change_log_file(F) || F <- ChangeLogFiles].
+
+read_change_log_file(FileName) ->
+    case file:read_file(FileName) of
+        {ok, Bin} -> Bin;
         {error, Reason} ->
-            throw(make_error(failed_to_read_change_log_file, #{file => ChangeLogFile, reason => Reason}))
+            throw(make_error(failed_to_read_change_log_file, #{file => FileName, reason => Reason}))
     end.
 
 copy_release(TargetVsn, RootDir, UnpackDir) ->

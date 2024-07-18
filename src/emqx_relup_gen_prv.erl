@@ -63,6 +63,7 @@ safe_do(State) ->
     #{target_vsn := TargetVsn, upgrade_path := UpgradePath}
         = get_upgrade_path(PathFile, TargetVsn),
     Relups = load_partial_relup_files(RelupDir),
+    ok = make_change_log_file(TargetVsn, UpgradePath, State),
     CompleteRelup = gen_compelte_relup(Relups, TargetVsn, UpgradePath),
     ok = save_relup_file(CompleteRelup, TargetVsn, State),
     ok = make_relup_tarball(TarFile, ErtsVsn, OtpVsn, State),
@@ -87,6 +88,7 @@ get_upgrade_path(PathFile, TargetVsn) ->
 
 parse_path_desc(FullPathStr) ->
     case parse_upgrade_path_str(FullPathStr) of
+        [] -> throw(make_error(empty_upgrade_path, #{path_str => FullPathStr}));
         [_] -> throw(make_error(invalid_upgrade_path, #{path_str => FullPathStr}));
         [TargetVsn | UpgradePath] ->
             #{target_vsn => TargetVsn, upgrade_path => UpgradePath}
@@ -111,6 +113,15 @@ load_partial_relup_files(RelupDir) ->
                 end
             end, #{}, Files)
     end.
+
+make_change_log_file(TargetVsn, UpgradePath, State) ->
+    BaseVsn = lists:last(UpgradePath),
+    ChangeLogScript = filename:join([rebar_dir:root_dir(State), "scripts", "rel", "format-changelog.sh"]),
+    File = filename:join([get_rel_dir(State), "releases", TargetVsn,
+            io_lib:format("change_log_~s_to_~s.md", [BaseVsn, TargetVsn])]),
+    MakeChangeLogCmd = lists:flatten(io_lib:format("~s -b e~s -v e~s > ~s", [ChangeLogScript, BaseVsn, TargetVsn, File])),
+    {ok, []} = emqx_relup_file_utils:sh(MakeChangeLogCmd, [{use_stdout, false}]),
+    ok.
 
 save_relup_file(Relup, TargetVsn, State) ->
     Filename = io_lib:format("~s.relup", [TargetVsn]),
