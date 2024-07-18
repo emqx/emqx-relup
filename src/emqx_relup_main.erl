@@ -14,12 +14,15 @@
         , unload/0
         , upgrade/1
         , upgrade/2
+        , get_package_info/1
         ]).
 
 -export([ get_all_upgrade_logs/0
         , get_latest_upgrade_status/0
         , delete_all_upgrade_logs/0
         ]).
+
+-import(emqx_relup_utils, [bin/1]).
 
 -type state() :: #{}.
 
@@ -62,6 +65,9 @@ upgrade(TargetVsn) ->
 upgrade(TargetVsn, Opts) ->
     gen_server:call(?MODULE, {upgrade, TargetVsn, Opts}, infinity).
 
+get_package_info(TargetVsn) ->
+    gen_server:call(?MODULE, {get_package_info, TargetVsn}, infinity).
+
 %% Called when the plugin application start
 load(_Env) ->
     ok.
@@ -78,10 +84,20 @@ init([]) ->
 
 handle_call({upgrade, TargetVsn, Opts}, _From, State) when is_list(TargetVsn) ->
     CurrVsn = emqx_release:version(),
+    RootDir = code:root_dir(),
     Key = log_upgrade_started(CurrVsn, TargetVsn, Opts),
-    Result = do_upgrade(CurrVsn, TargetVsn, code:root_dir(), Opts),
+    Result = do_upgrade(CurrVsn, TargetVsn, RootDir, Opts),
     ok = log_upgrade_result(Key, Result),
     {reply, Result, State};
+handle_call({get_package_info, TargetVsn}, _From, State) ->
+    Reply =
+        case emqx_relup_handler:get_package_info(TargetVsn) of
+            {error, Reason} ->
+                {error, Reason};
+            {ok, #{base_vsns := BaseVsns, change_log := ChangeLog}} ->
+                {ok, #{base_vsns => BaseVsns, change_log => ChangeLog}}
+        end,
+    {reply, Reply, State};
 handle_call(_Request, _From, State) ->
     {reply, ok, State}.
 
@@ -165,11 +181,11 @@ format_upgrade_log(#emqx_relup_log{
         result => maybe_result(Result)
     }.
 
-maybe_to_rfc3339(undefined) -> <<"-">>;
+maybe_to_rfc3339(undefined) -> <<>>;
 maybe_to_rfc3339(Int) ->
     bin(calendar:system_time_to_rfc3339(Int, [{unit, millisecond}])).
 
-maybe_result(undefined) -> <<"-">>;
+maybe_result(undefined) -> <<>>;
 maybe_result(Result) -> Result.
 
 log_upgrade_started(CurrVsn, TargetVsn, Opts) ->
@@ -206,10 +222,3 @@ format_result({error, Details}) ->
         err_type => maps:get(err_type, Details, unknown),
         details => bin(io_lib:format("~0p", [maps:remove(err_type, Details)]))
     }.
-
-bin(S) when is_list(S) ->
-    iolist_to_binary(S);
-bin(A) when is_atom(A) ->
-    atom_to_binary(A, utf8);
-bin(B) when is_binary(B) ->
-    B.

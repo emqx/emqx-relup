@@ -8,6 +8,7 @@
         , assert_propl_get/4
         , ts_filename/1
         , str/1
+        , bin/1
         , major_vsn/1
         , fork_type/1
         , is_arch_compatible/2
@@ -37,6 +38,13 @@ str(S) when is_atom(S) -> atom_to_list(S);
 str(S) when is_binary(S) -> binary_to_list(S);
 str(S) when is_integer(S) -> integer_to_list(S);
 str(S) when is_list(S) -> S.
+
+bin(S) when is_list(S) ->
+    iolist_to_binary(S);
+bin(A) when is_atom(A) ->
+    atom_to_binary(A, utf8);
+bin(B) when is_binary(B) ->
+    B.
 
 major_vsn(Vsn) ->
     case string:split(Vsn, ".") of

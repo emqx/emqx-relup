@@ -13,7 +13,7 @@
         , chr/2
         ]).
 
--import(emqx_relup_utils, [make_error/2]).
+-import(emqx_relup_utils, [make_error/2, bin/1]).
 
 -define(FMT(Str, Args), lists:flatten(io_lib:format(Str, Args))).
 
@@ -215,8 +215,6 @@ xcopy_win32(Source,Dest)->
 win32_ok({ok, _}) -> true;
 win32_ok({error, {Rc, _}}) when Rc<9; Rc=:=16 -> true;
 win32_ok(_) -> false.
-
-bin(X) -> iolist_to_binary(X).
 
 join([], Sep) when is_list(Sep) ->
     [];

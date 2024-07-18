@@ -1,16 +1,31 @@
 -module(emqx_relup_handler).
 
--export([ check_and_unpack/4
+-export([ get_package_info/1
+        , check_and_unpack/4
         , perform_upgrade/4
         , permanent_upgrade/4
         ]).
 
 -import(lists, [concat/1]).
--import(emqx_relup_utils, [str/1, exception_to_error/3, make_error/2]).
+-import(emqx_relup_utils, [str/1, bin/1, exception_to_error/3, make_error/2]).
 
 %%==============================================================================
 %% API
 %%==============================================================================
+get_package_info(TargetVsn) ->
+    try
+        {ok, UnpackDir} = unpack_release(TargetVsn),
+        RelupL = load_relup_files(TargetVsn, UnpackDir),
+        ChangeLog = load_change_log_file(TargetVsn, UnpackDir),
+        {ok, #{unpack_dir => UnpackDir, full_relup => RelupL,
+               base_vsns => get_base_vsns(RelupL), change_log => ChangeLog}}
+    catch
+        throw:Reason ->
+            {error, Reason};
+        Err:Reason:ST ->
+            exception_to_error(Err, Reason, ST)
+    end.
+
 check_and_unpack(CurrVsn, TargetVsn, RootDir, Opts) ->
     try
         ok = assert_not_same_vsn(CurrVsn, TargetVsn),
@@ -20,7 +35,7 @@ check_and_unpack(CurrVsn, TargetVsn, RootDir, Opts) ->
         {ok, OldRel} = consult_rel_file(RootDir, CurrVsn),
         {ok, NewRel} = consult_rel_file(UnpackDir, TargetVsn),
         ok = deploy_files(TargetVsn, RootDir, UnpackDir, OldRel, NewRel, Opts),
-        Relup = load_relup_file(CurrVsn, TargetVsn, get_deploy_dir(RootDir, TargetVsn, Opts)),
+        Relup = get_relup_entry(CurrVsn, TargetVsn, get_deploy_dir(RootDir, TargetVsn, Opts)),
         {ok, Opts#{unpack_dir => UnpackDir, old_rel => OldRel, new_rel => NewRel, relup => Relup}}
     catch
         throw:Reason ->
@@ -50,6 +65,9 @@ perform_upgrade(CurrVsn, TargetVsn, RootDir, Opts) ->
 %%==============================================================================
 %% Check Upgrade
 %%==============================================================================
+get_base_vsns(Relup) ->
+    lists:map(fun(#{from_version := Vsn}) -> bin(Vsn) end, Relup).
+
 assert_not_same_vsn(TargetVsn, TargetVsn) ->
     throw(make_error(already_upgraded_to_target_vsn, #{vsn => TargetVsn}));
 assert_not_same_vsn(_CurrVsn, _TargetVsn) ->
@@ -168,22 +186,34 @@ copy_lib(NLib, RootDir, UnpackDir) ->
     logger:notice("copy lib from ~s to ~s", [SrcDir, DstDir]),
     emqx_relup_file_utils:cp_r([SrcDir], DstDir).
 
-load_relup_file(CurrVsn, TargetVsn, Dir) ->
+get_relup_entry(CurrVsn, TargetVsn, Dir) ->
+    RelupL = load_relup_files(TargetVsn, Dir),
+    case lists:search(fun(#{target_version := TargetVsn0, from_version := FromVsn}) ->
+                FromVsn =:= CurrVsn andalso TargetVsn0 =:= TargetVsn
+            end, RelupL) of
+        false ->
+            throw(make_error(no_relup_entry, #{relup_dir => Dir, from_vsn => CurrVsn, target_vsn => TargetVsn}));
+        {value, Relup} ->
+            Relup
+    end.
+
+load_relup_files(TargetVsn, Dir) ->
     RelupFile = filename:join([Dir, "releases", TargetVsn, concat([TargetVsn, ".relup"])]),
     case file:consult(RelupFile) of
-        {ok, [RelupL]} ->
-            case lists:search(fun(#{target_version := TargetVsn0, from_version := FromVsn}) ->
-                        FromVsn =:= CurrVsn andalso TargetVsn0 =:= TargetVsn
-                    end, RelupL) of
-                false ->
-                    throw(make_error(no_relup_entry, #{file => RelupFile, from_vsn => CurrVsn, target_vsn => TargetVsn}));
-                {value, Relup} ->
-                    Relup
-            end;
-        {ok, RelupL} ->
-            throw(make_error(invalid_relup_file, #{file => RelupFile, content => RelupL}));
+        {ok, [RelupL]} -> RelupL;
+        {ok, Content} ->
+            throw(make_error(invalid_relup_file, #{file => RelupFile, content => Content}));
         {error, Reason} ->
             throw(make_error(failed_to_read_relup_file, #{file => RelupFile, reason => Reason}))
+    end.
+
+load_change_log_file(TargetVsn, Dir) ->
+    ChangeLogFile = filename:join([Dir, "releases", TargetVsn, "change_log"]),
+    case file:read_file(ChangeLogFile) of
+        {ok, Bin} ->
+            {ok, Bin};
+        {error, Reason} ->
+            throw(make_error(failed_to_read_change_log_file, #{file => ChangeLogFile, reason => Reason}))
     end.
 
 copy_release(TargetVsn, RootDir, UnpackDir) ->
