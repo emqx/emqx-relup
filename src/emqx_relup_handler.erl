@@ -141,7 +141,7 @@ deploy_files(TargetVsn, RootDir, UnpackDir, OldRel, NewRel, #{deploy_inplace := 
     {OldRel, NewRel};
 deploy_files(_TargetVsn, RootDir, UnpackDir, _OldRel, _NewRel, _Opts) ->
     DstDir = independent_deploy_root(RootDir),
-    logger:notice("copy dir from ~s to ~s", [UnpackDir, DstDir]),
+    logger:notice("add independent code dir: ~s", [DstDir]),
     emqx_relup_file_utils:cp_r([UnpackDir], DstDir).
 
 unpack_release(TargetVsn) ->
@@ -183,7 +183,7 @@ copy_lib(NLib, RootDir, UnpackDir) ->
     LibDirName = concat([emqx_relup_libs:lib_app_name(NLib), "-", emqx_relup_libs:lib_app_vsn(NLib)]),
     DstDir = filename:join([RootDir, "lib", LibDirName]),
     SrcDir = filename:join([UnpackDir, "lib", LibDirName]),
-    logger:notice("copy lib from ~s to ~s", [SrcDir, DstDir]),
+    logger:notice("add lib dir: ~s", [DstDir]),
     emqx_relup_file_utils:cp_r([SrcDir], DstDir).
 
 get_relup_entry(CurrVsn, TargetVsn, Dir) ->
@@ -367,7 +367,7 @@ assert_valid_instrs(Instr) ->
     throw(make_error(invalid_instr, #{instruction => Instr})).
 
 eval([], _Opts) ->
-    ok;
+    add_patch_code_path();
 eval([{load, Mod, Bin, FName} | Instrs], Opts) ->
     case code:module_md5(Bin) =:= curr_mod_md5(Mod) of
         true ->
@@ -376,6 +376,7 @@ eval([{load, Mod, Bin, FName} | Instrs], Opts) ->
         false ->
             % load_binary kills all procs running old code
             {module, _} = code:load_binary(Mod, FName, Bin),
+            true = code:add_patha(filename:dirname(FName)),
             eval(Instrs, Opts)
     end;
 eval([{suspend, Pids} | Instrs], Opts) ->
@@ -435,6 +436,14 @@ change_code(Pid, Mod, FromVsn, Extra) ->
                 pid => Pid, mod => Mod, from_vsn => FromVsn,
                 extra => Extra, reason => Reason}))
     end.
+
+% add_code_paths(RootDir, TargetVsn, Opts) ->
+%     LibDirs = filename:join([get_deploy_dir(RootDir, TargetVsn, Opts), "lib", "*", "ebin"]),
+%     ok = code:add_pathsa(filelib:wildcard(LibDirs)).
+
+add_patch_code_path() ->
+    true = code:add_patha(filename:join([emqx:data_dir(), "patches"])),
+    ok.
 
 %%==============================================================================
 %% Eval Post Upgrade Actions
