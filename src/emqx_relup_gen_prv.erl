@@ -65,7 +65,8 @@ safe_do(State) ->
     Relups = load_partial_relup_files(RelupDir),
     ok = make_change_log_file(TargetVsn, UpgradePath, State),
     CompleteRelup = gen_compelte_relup(Relups, TargetVsn, UpgradePath),
-    ok = save_relup_file(CompleteRelup, TargetVsn, State),
+    InjectedRelup = [inject_relup(Relup) || Relup <- CompleteRelup],
+    ok = save_relup_file(InjectedRelup, TargetVsn, State),
     ok = make_relup_tarball(TarFile, ErtsVsn, OtpVsn, State),
     rebar_log:log(info, "relup tarball generated: ~p", [TarFile]),
     {ok, State}.
@@ -184,6 +185,18 @@ make_relup_tarball(TarFile, ErtsVsn, _OtpVsn, State) ->
         {Dir, FullPathDir}
     end, ?INCLUDE_DIRS(ErtsVsn)),
     ok = r3_hex_erl_tar:create(TarFile, Files, [compressed]).
+
+inject_relup(Relup) ->
+    %% inject emqx_release and emqx_post_upgrade to the end of the list
+    CodeChanges = maps:get(code_changes, Relup, []),
+    CodeChanges1 =
+        lists:filtermap(fun
+            ({load_module, emqx_release}) -> false;
+            ({load_module, emqx_post_upgrade}) -> false;
+            (_) -> true
+        end, CodeChanges)
+        ++ [{load_module, emqx_post_upgrade}, {load_module, emqx_release}],
+    Relup#{code_changes => CodeChanges1}.
 
 %-------------------------------------------------------------------------------
 get_rel_dir(State) ->
