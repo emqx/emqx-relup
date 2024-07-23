@@ -199,10 +199,8 @@ get_relup_entry(CurrVsn, TargetVsn, Dir) ->
 
 load_relup_files(TargetVsn, Dir) ->
     RelupFile = filename:join([Dir, "releases", TargetVsn, concat([TargetVsn, ".relup"])]),
-    case file:consult(RelupFile) of
-        {ok, [RelupL]} -> RelupL;
-        {ok, Content} ->
-            throw(make_error(invalid_relup_file, #{file => RelupFile, content => Content}));
+    case file:script(RelupFile) of
+        {ok, RelupL} -> RelupL;
         {error, Reason} ->
             throw(make_error(failed_to_read_relup_file, #{file => RelupFile, reason => Reason}))
     end.
@@ -451,42 +449,15 @@ add_patch_code_path() ->
 eval_post_upgrade_actions(TargetVsn, CurrVsn, Relup) ->
     case get_upgrade_mod(TargetVsn) of
         {ok, Mod} ->
-            try
-                PostUpgradeActions = maps:get(post_upgrade_callbacks, Relup),
-                _ = lists:foldl(fun({Func, RevertFunc}, Rollbacks) ->
-                    _ = apply_func(Mod, Func, [CurrVsn], Rollbacks),
-                    [RevertFunc | Rollbacks]
-                end, [], PostUpgradeActions),
-                ok
-            catch
-                %% Here we try our best to revert the applied functions, so that
-                %% we have a clean system before we try the upgrade again.
-                throw:#{error := apply_func, rollbacks := Rollbacks} = Details ->
-                    lists:foreach(fun(RevertFunc) ->
-                        apply_func(Mod, RevertFunc, [CurrVsn], log)
-                    end, Rollbacks),
-                    {error, make_error(eval_post_upgrade_actions, #{details => maps:remove(rollbacks, Details)})};
-                Err:Reason:ST ->
-                    exception_to_error(Err, Reason, ST)
-            end;
+            lists:foreach(
+                fun
+                    ({Func, Args}) ->
+                        erlang:apply(Mod, Func, [CurrVsn] ++ Args);
+                    (Func) ->
+                        erlang:apply(Mod, Func, [CurrVsn])
+                end, maps:get(post_upgrade_callbacks, Relup, []));
         {error, Reason} ->
             {error, Reason}
-    end.
-
-apply_func(Mod, Func, Args, Rollbacks) ->
-    try erlang:apply(Mod, Func, Args)
-    catch
-        Err:Reason:ST ->
-            case Rollbacks of
-                log ->
-                    logger:error("Failed to apply function ~p:~p with args ~p, st: ~p",
-                        [Mod, Func, Args, {Err, Reason, ST}]);
-                _ ->
-                    throw(make_error(apply_func, #{
-                            func => Func, args => Args,
-                            reason => {Err, Reason, ST},
-                            rollbacks => Rollbacks}))
-            end
     end.
 
 get_upgrade_mod(TargetVsn) ->
