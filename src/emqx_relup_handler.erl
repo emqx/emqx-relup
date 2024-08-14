@@ -1,6 +1,7 @@
 -module(emqx_relup_handler).
 
 -export([ get_package_info/1
+        , get_target_vsn/0
         , check_and_unpack/4
         , perform_upgrade/4
         , permanent_upgrade/4
@@ -12,6 +13,14 @@
 %%==============================================================================
 %% API
 %%==============================================================================
+get_target_vsn() ->
+    PrivDir = code:priv_dir(emqx_relup),
+    case filelib:wildcard(filename:join([PrivDir, "*.tar.gz"])) of
+        [] -> throw(make_error(no_relup_tar_file_found, #{dir => PrivDir}));
+        [TarFile] -> str(filename:basename(TarFile, ".tar.gz"));
+        TarFiles -> throw(make_error(multiple_relup_tar_files_found, #{files => TarFiles}))
+    end.
+
 get_package_info(TargetVsn) ->
     try
         {ok, UnpackDir} = unpack_release(TargetVsn),

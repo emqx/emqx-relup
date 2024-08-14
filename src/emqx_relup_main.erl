@@ -12,8 +12,8 @@
 
 -export([ load/1
         , unload/0
+        , upgrade/0
         , upgrade/1
-        , upgrade/2
         , get_package_info/1
         ]).
 
@@ -59,11 +59,11 @@ start_link() ->
     ),
     gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
 
-upgrade(TargetVsn) ->
-    upgrade(TargetVsn, #{deploy_inplace => false}).
+upgrade() ->
+    upgrade(#{deploy_inplace => false}).
 
-upgrade(TargetVsn, Opts) ->
-    gen_server:call(?MODULE, {upgrade, TargetVsn, Opts}, infinity).
+upgrade(Opts) ->
+    gen_server:call(?MODULE, {upgrade, Opts}, infinity).
 
 get_package_info(TargetVsn) ->
     gen_server:call(?MODULE, {get_package_info, TargetVsn}, infinity).
@@ -82,9 +82,10 @@ unload() ->
 init([]) ->
     {ok, #{}}.
 
-handle_call({upgrade, TargetVsn, Opts}, _From, State) when is_list(TargetVsn) ->
+handle_call({upgrade, Opts}, _From, State) ->
     CurrVsn = emqx_release:version(),
     RootDir = code:root_dir(),
+    TargetVsn = emqx_relup_handler:get_target_vsn(),
     Key = log_upgrade_started(CurrVsn, TargetVsn, Opts),
     Result = do_upgrade(CurrVsn, TargetVsn, RootDir, Opts),
     ok = log_upgrade_result(Key, Result),
