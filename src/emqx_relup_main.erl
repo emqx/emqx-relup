@@ -14,7 +14,7 @@
         , unload/0
         , upgrade/0
         , upgrade/1
-        , get_package_info/1
+        , get_package_info/0
         ]).
 
 -export([ get_all_upgrade_logs/0
@@ -65,8 +65,8 @@ upgrade() ->
 upgrade(Opts) ->
     gen_server:call(?MODULE, {upgrade, Opts}, infinity).
 
-get_package_info(TargetVsn) ->
-    gen_server:call(?MODULE, {get_package_info, TargetVsn}, infinity).
+get_package_info() ->
+    gen_server:call(?MODULE, get_package_info, infinity).
 
 %% Called when the plugin application start
 load(_Env) ->
@@ -90,7 +90,8 @@ handle_call({upgrade, Opts}, _From, State) ->
     Result = do_upgrade(CurrVsn, TargetVsn, RootDir, Opts),
     ok = log_upgrade_result(Key, Result),
     {reply, Result, State};
-handle_call({get_package_info, TargetVsn}, _From, State) ->
+handle_call(get_package_info, _From, State) ->
+    TargetVsn = emqx_relup_handler:get_target_vsn(),
     Reply =
         case emqx_relup_handler:get_package_info(TargetVsn) of
             {error, Reason} ->
