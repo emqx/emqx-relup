@@ -148,10 +148,15 @@ deploy_files(TargetVsn, RootDir, UnpackDir, OldRel, NewRel, #{deploy_inplace := 
     ok = copy_libs(TargetVsn, RootDir, UnpackDir, OldRel, NewRel),
     ok = copy_release(TargetVsn, RootDir, UnpackDir),
     {OldRel, NewRel};
-deploy_files(_TargetVsn, RootDir, UnpackDir, _OldRel, _NewRel, _Opts) ->
+deploy_files(TargetVsn, RootDir, UnpackDir, _OldRel, _NewRel, _Opts) ->
     DstDir = independent_deploy_root(RootDir),
     logger:notice("add independent code dir: ~s", [DstDir]),
-    emqx_relup_file_utils:cp_r([UnpackDir], DstDir).
+    ok = emqx_relup_file_utils:cp_r([UnpackDir], DstDir),
+    DirName = filename:basename(UnpackDir),
+    file:rename(
+        filename:join([DstDir, DirName]),
+        filename:join([DstDir, TargetVsn])
+    ).
 
 unpack_release(TargetVsn) ->
     TarFile = filename:join([code:priv_dir(emqx_relup), concat([TargetVsn, ".tar.gz"])]),
@@ -160,12 +165,34 @@ unpack_release(TargetVsn) ->
             throw(make_error(relup_tar_file_not_found, #{file => TarFile}));
         true ->
             TmpDir = emqx_relup_file_utils:tmp_dir(),
-            UnpackDir = filename:join([TmpDir, TargetVsn]),
-            ok = emqx_relup_file_utils:ensure_dir_deleted(UnpackDir),
-            ok = filelib:ensure_dir(filename:join([UnpackDir, "dummy"])),
-            ok = erl_tar:extract(TarFile, [{cwd, UnpackDir}, compressed]),
+            UnpackDir = filename:join([TmpDir, TargetVsn ++ "_hash_" ++ str(calc_hash(TarFile))]),
+            ok = maybe_extract_tar(TarFile, UnpackDir, TargetVsn),
             {ok, UnpackDir}
     end.
+
+maybe_extract_tar(TarFile, UnpackDir, TargetVsn) ->
+    case already_extracted(UnpackDir, TargetVsn) of
+        true -> ok;
+        false ->
+            ok = emqx_relup_file_utils:ensure_dir_deleted(UnpackDir),
+            ok = filelib:ensure_dir(filename:join([UnpackDir, "dummy"])),
+            ok = erl_tar:extract(TarFile, [{cwd, UnpackDir}, compressed])
+    end.
+
+already_extracted(UnpackDir, TargetVsn) ->
+    case filelib:is_dir(UnpackDir) of
+        false -> false;
+        true ->
+            case filelib:wildcard(filename:join([UnpackDir, "releases", TargetVsn, "*"])) of
+                [] -> false;
+                _ -> true
+            end
+    end.
+
+calc_hash(TarFile) ->
+    {ok, Bin} = file:read_file(TarFile),
+    <<HashPrefix:16/binary, _/binary>> = binary:encode_hex(crypto:hash(sha256, Bin)),
+    HashPrefix.
 
 copy_libs(_TargetVsn, RootDir, UnpackDir, OldRel, NewRel) ->
     OldLibs = emqx_relup_libs:rel_libs(OldRel),
