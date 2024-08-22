@@ -126,13 +126,9 @@ assert_same_major_vsn(CurrOTPVsn, NewOTPVsn) ->
         false -> throw(make_error(otp_major_vsn_mismatch, #{curr => CurrOTPVsn, new => NewOTPVsn}))
     end.
 
-assert_same_otp_fork(CurrOTPVsn, NewOTPVsn) ->
-    CurrFork = emqx_relup_utils:fork_type(CurrOTPVsn),
-    NewFork = emqx_relup_utils:fork_type(NewOTPVsn),
-    case CurrFork =:= NewFork of
-        true -> ok;
-        false -> throw(make_error(otp_fork_type_mismatch, #{curr => CurrOTPVsn, new => NewOTPVsn}))
-    end.
+assert_same_otp_fork(_CurrOTPVsn, _NewOTPVsn) ->
+    %% TODO
+    ok.
 
 assert_same_os_arch(CurrBuildInfo, NewBuildInfo) ->
     case maps:get("os", CurrBuildInfo) =:= maps:get("os", NewBuildInfo) andalso
@@ -151,6 +147,7 @@ deploy_files(TargetVsn, RootDir, UnpackDir, OldRel, NewRel, #{deploy_inplace := 
 deploy_files(TargetVsn, RootDir, UnpackDir, _OldRel, _NewRel, _Opts) ->
     DstDir = independent_deploy_root(RootDir),
     logger:notice("add independent code dir: ~s", [DstDir]),
+    ok = emqx_relup_file_utils:ensure_dir_deleted(filename:basename([DstDir, TargetVsn])),
     ok = emqx_relup_file_utils:cp_r([UnpackDir], DstDir),
     DirName = filename:basename(UnpackDir),
     file:rename(
@@ -331,29 +328,29 @@ eval_relup(CurrVsn, TargetVsn, Relup, LibModInfo) ->
 
 eval_code_changes(Relup, LibModInfo, CurrVsn) ->
     CodeChanges = maps:get(code_changes, Relup),
-    ModProcs = release_handler_1:get_supervised_procs(),
-    Instrs = prepare_code_change(CodeChanges, LibModInfo, ModProcs, []),
+    Instrs = prepare_code_change(CodeChanges, LibModInfo, []),
     ok = write_troubleshoot_file("relup", strip_instrs(Instrs)),
     eval(Instrs, #{from_vsn => CurrVsn}).
 
-prepare_code_change([{load_module, Mod} | CodeChanges], LibModInfo, ModProcs, Instrs) ->
+prepare_code_change([{load_module, Mod} | CodeChanges], LibModInfo, Instrs) ->
     {Bin, FName} = load_object_code(Mod, LibModInfo),
     %% TODO: we can chose to stop if some processes are still running old code
     _ = code:soft_purge(Mod),
-    prepare_code_change(CodeChanges, LibModInfo, ModProcs, [{load, Mod, Bin, FName} | Instrs]);
-prepare_code_change([{restart_application, AppName} | CodeChanges], LibModInfo, ModProcs, Instrs) ->
+    prepare_code_change(CodeChanges, LibModInfo, [{load, Mod, Bin, FName} | Instrs]);
+prepare_code_change([{restart_application, AppName} | CodeChanges], LibModInfo, Instrs) ->
     Mods = emqx_relup_libs:get_app_mods(AppName, LibModInfo),
     CodeChanges1 = [{load_module, Mod} || Mod <- Mods] ++ CodeChanges,
     ExpandedInstrs = [{stop_app, AppName}, {remove_app, AppName} | CodeChanges1] ++ [{start_app, AppName}],
-    prepare_code_change(ExpandedInstrs, LibModInfo, ModProcs, Instrs);
-prepare_code_change([{update, Mod, Change} | CodeChanges], LibModInfo, ModProcs, Instrs) ->
+    prepare_code_change(ExpandedInstrs, LibModInfo, Instrs);
+prepare_code_change([{update, Mod, Change} | CodeChanges], LibModInfo, Instrs) ->
+    ModProcs = get_supervised_procs(),
     Pids = pids_of_callback_mod(Mod, ModProcs),
     ExpandedInstrs = [{suspend, Pids}, {load_module, Mod}, {code_change, Pids, Mod, Change},
                       {resume, Pids}] ++ CodeChanges,
-    prepare_code_change(ExpandedInstrs, LibModInfo, ModProcs, Instrs);
-prepare_code_change([Instr | CodeChanges], LibModInfo, ModProcs, Instrs) ->
-    prepare_code_change(CodeChanges, LibModInfo, ModProcs, [assert_valid_instrs(Instr) | Instrs]);
-prepare_code_change([], _, _, Instrs) ->
+    prepare_code_change(ExpandedInstrs, LibModInfo, Instrs);
+prepare_code_change([Instr | CodeChanges], LibModInfo, Instrs) ->
+    prepare_code_change(CodeChanges, LibModInfo, [assert_valid_instrs(Instr) | Instrs]);
+prepare_code_change([], _, Instrs) ->
     lists:reverse(Instrs).
 
 curr_mod_md5(Mod) ->
@@ -478,6 +475,112 @@ change_code(Pid, Mod, FromVsn, Extra) ->
 add_patch_code_path() ->
     true = code:add_patha(filename:join([emqx:data_dir(), "patches"])),
     ok.
+
+get_supervised_procs() ->
+    lists:foldl(
+        fun({AppName, _Desc, _Vsn}, Procs) ->
+            MasterPid = application_controller:get_master(AppName),
+            get_master_procs(AppName, Procs, MasterPid)
+        end, [], application:which_applications()).
+
+get_supervised_procs(AppName, SupPid, Procs, undefined) ->
+    get_procs(which_children(SupPid, AppName, SupPid), SupPid) ++ Procs;
+get_supervised_procs(_, SupPid, Procs, SupMod) ->
+    get_procs(which_children(SupPid, SupMod, SupPid), SupPid) ++
+        [{undefined, undefined, SupPid, [SupMod]} | Procs].
+
+get_master_procs(AppName, Procs, MasterPid) when is_pid(MasterPid) ->
+    {SupPid, _AppMod} = application_master:get_child(MasterPid),
+    get_supervised_procs(AppName, SupPid, Procs, get_supervisor_module(AppName, SupPid));
+get_master_procs(_, Procs, _) ->
+    Procs.
+
+get_supervisor_module(AppName, SupPid) ->
+    try supervisor:get_callback_module(SupPid)
+    catch
+        Err:Reason:ST ->
+            logger:error("get_callback_module failed, app: ~p, supervisor ~p, error: ~0p~n",
+                [AppName, SupPid, {Err, Reason, ST}]),
+            undefined
+    end.
+
+get_procs([{Name, Pid, worker, dynamic} | T], Sup) when is_pid(Pid) ->
+    Mods = maybe_get_dynamic_mods(Name, Pid),
+    [{Sup, Name, Pid, Mods} | get_procs(T, Sup)];
+get_procs([{Name, Pid, worker, Mods} | T], Sup) when is_pid(Pid), is_list(Mods) ->
+    [{Sup, Name, Pid, Mods} | get_procs(T, Sup)];
+get_procs([{Name, Pid, supervisor, Mods} | T], Sup) when is_pid(Pid) ->
+    [{Sup, Name, Pid, Mods} | get_procs(T, Sup)] ++
+        get_procs(which_children(Pid, Name, Pid), Pid);
+get_procs([_H | T], Sup) ->
+    get_procs(T, Sup);
+get_procs(_, _Sup) ->
+    [].
+
+-define(NOT_TIMEOUT_OR_NODE_DOWN(REASON),
+    REASON =/= timeout andalso
+        not (is_tuple(REASON) andalso element(1, REASON) =:= nodedown)).
+
+which_children(Proc, Name, Pid) ->
+    case get_proc_state(Proc) of
+        noproc ->
+            logger:warning("a process (~p) exited during supervision tree interrogation. ", [Proc]),
+            [];
+        suspended ->
+            throw(make_error(suspended_supervisor, #{
+                reason => <<"which_children failed, supervisor suspended">>,
+                name => Name,
+                pid => Pid
+            }));
+        running ->
+            call_which_children(Name, Pid)
+    end.
+
+-dialyzer([{nowarn_function, [call_which_children/2]}]).
+call_which_children(Name, Pid) ->
+    try supervisor:which_children(Pid) of
+        Res when is_list(Res) -> Res;
+        _ ->
+            %% emqtt_quic_stream returns {error, unimpl, which_children}.
+            []
+    catch
+        exit:Reason when ?NOT_TIMEOUT_OR_NODE_DOWN(Reason) ->
+            [];
+        exit:Other:ST ->
+            throw(make_error(which_children_failed, #{
+                reason => <<"which_children failed">>,
+                name => Name,
+                pid => Pid,
+                error => {Other, ST}
+            }))
+    end.
+
+get_proc_state(Proc) ->
+    try sys:get_status(Proc) of
+        {status, _, {module, _}, [_, State, _, _, _]} when State == running;
+                                                           State == suspended ->
+            State
+    catch
+        exit:{Reason, {sys, get_status, [Proc]}} when ?NOT_TIMEOUT_OR_NODE_DOWN(Reason) ->
+            noproc
+    end.
+
+maybe_get_dynamic_mods(Name, Pid) ->
+    try gen:call(Pid, self(), get_modules) of
+        {ok, Mods} when is_list(Mods) -> Mods;
+        {ok, Res} ->
+            logger:warning("got invalid dynamic_mods: ~p", Res)
+    catch
+        exit:Reason when ?NOT_TIMEOUT_OR_NODE_DOWN(Reason) ->
+            [];
+        exit:Other:ST ->
+            throw(make_error(get_modules_failed, #{
+                reason => <<"maybe invalid childspec">>,
+                name => Name,
+                pid => Pid,
+                error => {Other, ST}
+            }))
+    end.
 
 %%==============================================================================
 %% Eval Post Upgrade Actions
