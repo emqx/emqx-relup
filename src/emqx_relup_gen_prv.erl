@@ -54,8 +54,9 @@ safe_do(State) ->
     TargetVsn = get_release_vsn(State),
     ErtsVsn = get_erts_vsn(),
     OtpVsn = get_otp_vsn(),
-    TarFile = filename:join([rebar_dir:root_dir(State), "_build", "default",
-                "plugins", "emqx_relup", "priv", ?TAR_FILE(TargetVsn)]),
+    TarDir = filename:join([rebar_dir:root_dir(State), "_build", "default",
+                "plugins", "emqx_relup", "priv"]),
+    TarFile = filename:join([TarDir, ?TAR_FILE(TargetVsn)]),
     PathFile = getopt_upgrade_path_file(RelupDir, RawArgs),
     rebar_log:log(info, "generating relup tarball for: ~p", [TargetVsn]),
     rebar_log:log(debug, "using relup dir: ~p", [RelupDir]),
@@ -67,6 +68,7 @@ safe_do(State) ->
     CompleteRelup = gen_compelte_relup(Relups, TargetVsn, UpgradePath),
     InjectedRelup = [inject_relup(Relup) || Relup <- CompleteRelup],
     ok = save_relup_file(InjectedRelup, TargetVsn, State),
+    ok = ensure_tar_files_deleted(TarDir),
     ok = make_relup_tarball(TarFile, ErtsVsn, OtpVsn, State),
     rebar_log:log(info, "relup tarball generated: ~p", [TarFile]),
     {ok, State}.
@@ -199,6 +201,13 @@ inject_relup(Relup) ->
     Relup#{code_changes => CodeChanges1}.
 
 %-------------------------------------------------------------------------------
+ensure_tar_files_deleted(TarDir) ->
+    Files = filelib:wildcard(filename:join([TarDir, ?TAR_FILE("*")])),
+    lists:foreach(fun(File) ->
+            rebar_log:log(info, "delete old relup tarball: ~p", [File]),
+            emqx_relup_file_utils:ensure_file_deleted(File)
+        end, Files).
+
 get_rel_dir(State) ->
     filename:join([rebar_dir:base_dir(State), "rel", "emqx"]).
 
