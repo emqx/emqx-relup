@@ -116,7 +116,7 @@ check_otp_comaptibility(CurrVsn, RootDir, UnpackDir, TargetVsn) ->
     assert_same_major_vsn(CurrOTPVsn, NewOTPVsn),
     %% 2. We have our own OTP fork, so here we make sure the new OTP version is also from our fork,
     %%    otherwise the emqx may failed to get started due to mira problems.
-    assert_same_otp_fork(CurrOTPVsn, NewOTPVsn),
+    assert_same_otp_fork(UnpackDir),
     %% 3. We need to make sure the os arch the same, otherwise the emqx will fail to load NIFs.
     assert_same_os_arch(CurrBuildInfo, NewBuildInfo).
 
@@ -126,15 +126,45 @@ assert_same_major_vsn(CurrOTPVsn, NewOTPVsn) ->
         false -> throw(make_error(otp_major_vsn_mismatch, #{curr => CurrOTPVsn, new => NewOTPVsn}))
     end.
 
-assert_same_otp_fork(_CurrOTPVsn, _NewOTPVsn) ->
-    %% TODO
-    ok.
+assert_same_otp_fork(UnpackDir) ->
+    CurrCompatible = running_otp_compatible(),
+    PkgCompatible = pkg_otp_compatible(UnpackDir),
+    case CurrCompatible =:= PkgCompatible of
+        true -> ok;
+        false ->
+            throw(make_error(otp_compatible_mismatch,
+                #{curr_compatible => CurrCompatible, new => PkgCompatible,
+                  details => <<"Please make sure the running emqx is built using EMQX's official Erlang/OTP,
+                  and also the hot-upgrade package is got from EMQX team.">>}))
+    end.
 
 assert_same_os_arch(CurrBuildInfo, NewBuildInfo) ->
     case maps:get("os", CurrBuildInfo) =:= maps:get("os", NewBuildInfo) andalso
          emqx_relup_utils:is_arch_compatible(maps:get("arch", CurrBuildInfo), maps:get("arch", NewBuildInfo)) of
         true -> ok;
         false -> throw(make_error(os_arch_mismatch, #{curr => CurrBuildInfo, new => NewBuildInfo}))
+    end.
+
+running_otp_compatible() ->
+    try mnesia_hook:module_info() of
+        _ -> yes
+    catch
+        error:undef -> no
+    end.
+
+pkg_otp_compatible(UnpackDir) ->
+    %% the mnesia_hook is added by emqx team
+    MnesiaDir = filename:join([UnpackDir, "lib", "mnesia-*"]),
+    BeamFile = filename:join([MnesiaDir, "ebin", "mnesia_hook.beam"]),
+    case filelib:wildcard(MnesiaDir) of
+        [] ->
+            %% the relup does not include mneisa dir, maybe compatible
+            yes;
+        [_ | _] ->
+            case filelib:wildcard(BeamFile) of
+                [] -> no;
+                [_ | _] -> yes
+            end
     end.
 
 %%==============================================================================
