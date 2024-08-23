@@ -438,8 +438,10 @@ eval([{load, Mod, Bin, FName} | Instrs], Opts) ->
             % load_binary kills all procs running old code
             {module, _} = code:load_binary(Mod, FName, Bin),
             true = code:add_patha(filename:dirname(FName)),
-            eval(Instrs, Opts)
-    end;
+            logger:debug("loaded module at: ~p", [FName]),
+            ok
+    end,
+    eval(Instrs, Opts);
 eval([{suspend, Pids} | Instrs], Opts) ->
     lists:foreach(fun(Pid) ->
             case catch sys:suspend(Pid) of
