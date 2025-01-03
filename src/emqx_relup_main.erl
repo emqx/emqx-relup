@@ -41,7 +41,7 @@
     extra = #{} :: map()
 }).
 
--define(LOG(LEVEL, MSG), logger:log(LEVEL, (MSG)#{tag => "RELUP"})).
+-define(LOG(LEVEL, MSG), logger:log(LEVEL, (begin MSG end)#{tag => "RELUP"})).
 
 %%==============================================================================
 %% API
